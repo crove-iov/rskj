@@ -57,6 +57,8 @@ public class BlockResultDTO {
     private final String bitcoinMergedMiningCoinbaseTransaction;
     private final String bitcoinMergedMiningMerkleProof;
     private final String hashForMergedMining;
+    private final String paidFees;
+    private final String cumulativeDifficulty;
 
     public BlockResultDTO(
             Long number,
@@ -70,6 +72,7 @@ public class BlockResultDTO {
             RskAddress miner,
             BlockDifficulty difficulty,
             BlockDifficulty totalDifficulty,
+            BlockDifficulty cumulativeDifficulty,
             byte[] extraData,
             int size,
             byte[] gasLimit,
@@ -81,7 +84,8 @@ public class BlockResultDTO {
             byte[] bitcoinMergedMiningHeader,
             byte[] bitcoinMergedMiningCoinbaseTransaction,
             byte[] bitcoinMergedMiningMerkleProof,
-            byte[] hashForMergedMining) {
+            byte[] hashForMergedMining,
+            Coin paidFees) {
         this.number = number != null ? TypeConverter.toQuantityJsonHex(number) : null;
         this.hash = hash != null ? hash.toJsonString() : null;
         this.parentHash = parentHash.toJsonString();
@@ -91,9 +95,11 @@ public class BlockResultDTO {
         this.stateRoot = TypeConverter.toUnformattedJsonHex(stateRoot);
         this.receiptsRoot = TypeConverter.toUnformattedJsonHex(receiptsRoot);
         this.miner = miner != null ? TypeConverter.toUnformattedJsonHex(miner.getBytes()) : null;
-        this.difficulty = TypeConverter.toQuantityJsonHex(difficulty.getBytes());
 
+        this.difficulty = TypeConverter.toQuantityJsonHex(difficulty.getBytes());
         this.totalDifficulty = TypeConverter.toQuantityJsonHex(totalDifficulty.getBytes());
+        this.cumulativeDifficulty = TypeConverter.toQuantityJsonHex(cumulativeDifficulty.getBytes());
+
         this.extraData = TypeConverter.toUnformattedJsonHex(extraData);
         this.size = TypeConverter.toQuantityJsonHex(size);
         this.gasLimit = TypeConverter.toQuantityJsonHex(gasLimit);
@@ -108,6 +114,7 @@ public class BlockResultDTO {
         this.bitcoinMergedMiningCoinbaseTransaction = TypeConverter.toUnformattedJsonHex(bitcoinMergedMiningCoinbaseTransaction);
         this.bitcoinMergedMiningMerkleProof = TypeConverter.toUnformattedJsonHex(bitcoinMergedMiningMerkleProof);
         this.hashForMergedMining = TypeConverter.toUnformattedJsonHex(hashForMergedMining);
+        this.paidFees = paidFees != null ? TypeConverter.toQuantityJsonHex(paidFees.getBytes()) : null;
     }
 
     public static BlockResultDTO fromBlock(Block b, boolean fullTx, BlockStore blockStore) {
@@ -150,6 +157,7 @@ public class BlockResultDTO {
                 isPending ? null : b.getCoinbase(),
                 b.getDifficulty(),
                 blockStore.getTotalDifficultyForHash(b.getHash().getBytes()),
+                b.getCumulativeDifficulty(),
                 b.getExtraData(),
                 b.getEncoded().length,
                 b.getGasLimit(),
@@ -161,7 +169,8 @@ public class BlockResultDTO {
                 b.getBitcoinMergedMiningHeader(),
                 b.getBitcoinMergedMiningCoinbaseTransaction(),
                 b.getBitcoinMergedMiningMerkleProof(),
-                b.getHashForMergedMining()
+                b.getHashForMergedMining(),
+                b.getFeesPaidToMiner()
         );
     }
 
@@ -209,6 +218,8 @@ public class BlockResultDTO {
         return totalDifficulty;
     }
 
+    public String getCumulativeDifficulty() { return cumulativeDifficulty; }
+
     public String getExtraData() {
         return extraData;
     }
@@ -254,5 +265,8 @@ public class BlockResultDTO {
     public String getHashForMergedMining() {
         return hashForMergedMining;
     }
-}
 
+    public String getPaidFees() {
+        return paidFees;
+    }
+}

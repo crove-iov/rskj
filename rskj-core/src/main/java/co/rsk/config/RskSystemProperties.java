@@ -180,8 +180,8 @@ public class RskSystemProperties extends SystemProperties {
         return ret;
     }
 
-    public boolean isFlushEnabled() {
-        return getBoolean("blockchain.flush", true);
+    public GarbageCollectorConfig garbageCollectorConfig() {
+        return GarbageCollectorConfig.fromConfig(configFromFiles.getConfig("blockchain.gc"));
     }
 
     public int flushNumberOfBlocks() {
@@ -272,6 +272,11 @@ public class RskSystemProperties extends SystemProperties {
     }
 
     // Sync config properties
+
+    public boolean getIsHeartBeatEnabled() {
+        return getBoolean("sync.heartBeat.enabled", false);
+    }
+
     public int getExpectedPeers() {
         return configFromFiles.getInt("sync.expectedPeers");
     }
@@ -292,13 +297,21 @@ public class RskSystemProperties extends SystemProperties {
         return configFromFiles.getInt("sync.maxSkeletonChunks");
     }
 
+    public int getMaxRequestedBodies() {
+        return configFromFiles.getInt("sync.maxRequestedBodies");
+    }
+
+    public int getLongSyncLimit() {
+        return configFromFiles.getInt("sync.longSyncLimit");
+    }
+
     // its fixed, cannot be set by config file
     public int getChunkSize() {
         return CHUNK_SIZE;
     }
 
     public VmConfig getVmConfig() {
-        return new VmConfig(vmTrace(), vmTraceInitStorageLimit(), dumpBlock(), dumpStyle());
+        return new VmConfig(vmTrace(), vmTraceOptions(), vmTraceInitStorageLimit(), dumpBlock(), dumpStyle(), getNetworkConstants().getChainId());
     }
 
     public long peerDiscoveryCleanPeriod() {
@@ -317,7 +330,13 @@ public class RskSystemProperties extends SystemProperties {
         return configFromFiles.getInt("cache.states.max-elements");
     }
 
+    public int getReceiptsCacheSize() {
+        return configFromFiles.getInt("cache.receipts.max-elements");
+    }
+
     public long getVmExecutionStackSize() {
         return configFromFiles.getBytes("vm.executionStackSize");
     }
+
+    public String cryptoLibrary() { return configFromFiles.getString("crypto.library");}
 }

@@ -18,29 +18,24 @@
 
 package co.rsk.net;
 
+import co.rsk.config.InternalService;
 import co.rsk.config.RskSystemProperties;
-import co.rsk.core.BlockDifficulty;
 import co.rsk.crypto.Keccak256;
 import co.rsk.net.messages.*;
 import co.rsk.scoring.EventType;
 import co.rsk.scoring.PeerScoringManager;
-import co.rsk.validators.BlockValidationRule;
-import com.google.common.annotations.VisibleForTesting;
-import org.ethereum.core.Block;
 import org.ethereum.crypto.HashUtil;
-import org.ethereum.db.BlockStore;
 import org.ethereum.net.server.ChannelManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-public class NodeMessageHandler implements MessageHandler, Runnable {
+public class NodeMessageHandler implements MessageHandler, InternalService, Runnable {
     private static final Logger logger = LoggerFactory.getLogger("messagehandler");
     private static final Logger loggerMessageProcess = LoggerFactory.getLogger("messageProcess");
     public static final int MAX_NUMBER_OF_MESSAGES_CACHED = 5000;
@@ -52,40 +47,37 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
     private final ChannelManager channelManager;
     private final TransactionGateway transactionGateway;
     private final PeerScoringManager peerScoringManager;
-    private final BlockStore continuousBlockStore;
 
     private volatile long lastStatusSent = System.currentTimeMillis();
     private volatile long lastTickSent = System.currentTimeMillis();
 
-    private BlockValidationRule blockValidationRule;
-
-    private LinkedBlockingQueue<MessageTask> queue = new LinkedBlockingQueue<>();
+    private final StatusResolver statusResolver;
     private Set<Keccak256> receivedMessages = Collections.synchronizedSet(new HashSet<>());
     private long cleanMsgTimestamp = 0;
+
+    private PriorityBlockingQueue<MessageTask> queue;
 
     private volatile boolean stopped;
 
     /**
-     * @param continuousBlockStore This block store is used to report the current node status.
-     *                             It should have every block from genesis to best block.
+     * @param statusResolver
      */
     public NodeMessageHandler(RskSystemProperties config,
-                              BlockStore continuousBlockStore,
-                              @Nonnull final BlockProcessor blockProcessor,
+                              final BlockProcessor blockProcessor,
                               final SyncProcessor syncProcessor,
                               @Nullable final ChannelManager channelManager,
                               @Nullable final TransactionGateway transactionGateway,
                               @Nullable final PeerScoringManager peerScoringManager,
-                              @Nonnull BlockValidationRule blockValidationRule) {
+                              StatusResolver statusResolver) {
         this.config = config;
         this.channelManager = channelManager;
         this.blockProcessor = blockProcessor;
         this.syncProcessor = syncProcessor;
         this.transactionGateway = transactionGateway;
-        this.blockValidationRule = blockValidationRule;
-        this.continuousBlockStore = continuousBlockStore;
+        this.statusResolver = statusResolver;
         this.cleanMsgTimestamp = System.currentTimeMillis();
         this.peerScoringManager = peerScoringManager;
+        this.queue = new PriorityBlockingQueue<>(11, new MessageTask.TaskComparator());
     }
 
     /**
@@ -94,7 +86,7 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
      * @param sender  the message sender.
      * @param message the message to be processed.
      */
-    public synchronized void processMessage(final MessageChannel sender, @Nonnull final Message message) {
+    public synchronized void processMessage(final Peer sender, @Nonnull final Message message) {
         long start = System.nanoTime();
         logger.trace("Process message type: {}", message.getMessageType());
 
@@ -104,7 +96,6 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
                 transactionGateway,
                 peerScoringManager,
                 channelManager,
-                blockValidationRule,
                 sender);
         message.accept(mv);
 
@@ -112,7 +103,7 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
     }
 
     @Override
-    public void postMessage(MessageChannel sender, Message message) {
+    public void postMessage(Peer sender, Message message) {
         logger.trace("Start post message (queue size {}) (message type {})", this.queue.size(), message.getMessageType());
         // There's an obvious race condition here, but fear not.
         // receivedMessages and logger are thread-safe
@@ -123,7 +114,7 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
         logger.trace("End post message (queue size {})", this.queue.size());
     }
 
-    private void tryAddMessage(MessageChannel sender, Message message) {
+    private void tryAddMessage(Peer sender, Message message) {
         Keccak256 encodedMessage = new Keccak256(HashUtil.keccak256(message.getEncoded()));
         if (!receivedMessages.contains(encodedMessage)) {
             if (message.getMessageType() == MessageType.BLOCK_MESSAGE || message.getMessageType() == MessageType.TRANSACTIONS) {
@@ -132,12 +123,19 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
                 }
                 this.receivedMessages.add(encodedMessage);
             }
-            if (!this.queue.offer(new MessageTask(sender, message))){
-                logger.trace("Queue full, message not added to the queue");
-            }
+
+            double score = sender.score(System.currentTimeMillis(), message.getMessageType());
+
+            this.addMessage(sender, message, score);
         } else {
             recordEvent(sender, EventType.REPEATED_MESSAGE);
             logger.trace("Received message already known, not added to the queue");
+        }
+    }
+
+    private void addMessage(Peer sender, Message message, double score) {
+        if (score >= 0 && !this.queue.offer(new MessageTask(sender, message, score))) {
+            logger.warn("Unexpected path. Is message queue bounded now?");
         }
     }
 
@@ -152,7 +150,7 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
 
     @Override
     public void start() {
-        new Thread(this).start();
+        new Thread(this,"message handler").start();
     }
 
     @Override
@@ -204,25 +202,16 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
         //Refresh status to peers every 10 seconds or so
         Duration timeStatus = Duration.ofMillis(now - lastStatusSent);
         if (timeStatus.getSeconds() > 10) {
-            sendStatusToAll();
+            Status status = statusResolver.currentStatus();
+            logger.trace("Sending status best block to all {} {}",
+                    status.getBestBlockNumber(),
+                    status.getBestBlockHash());
+            channelManager.broadcastStatus(status);
             lastStatusSent = now;
         }
     }
 
-    @VisibleForTesting
-    public synchronized void sendStatusToAll() {
-        Block block = continuousBlockStore.getBestBlock();
-        BlockDifficulty totalDifficulty = continuousBlockStore.getTotalDifficultyForHash(block.getHash().getBytes());
-
-        Status status = new Status(block.getNumber(),
-                block.getHash().getBytes(),
-                block.getParentHash().getBytes(),
-                totalDifficulty);
-        logger.trace("Sending status best block to all {} {}", block.getNumber(), block.getHash());
-        this.channelManager.broadcastStatus(status);
-    }
-
-    private void recordEvent(MessageChannel sender, EventType event) {
+    private void recordEvent(Peer sender, EventType event) {
         if (sender == null) {
             return;
         }
@@ -230,16 +219,18 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
         this.peerScoringManager.recordEvent(sender.getPeerNodeID(), sender.getAddress(), event);
     }
 
-    private static class MessageTask {
-        private MessageChannel sender;
+    private static class MessageTask  {
+        private Peer sender;
         private Message message;
+        private double score;
 
-        public MessageTask(MessageChannel sender, Message message) {
+        public MessageTask(Peer sender, Message message, double score) {
             this.sender = sender;
             this.message = message;
+            this.score = score;
         }
 
-        public MessageChannel getSender() {
+        public Peer getSender() {
             return this.sender;
         }
 
@@ -254,6 +245,16 @@ public class NodeMessageHandler implements MessageHandler, Runnable {
                     ", message=" + message +
                     '}';
         }
+
+        private static class TaskComparator implements Comparator<MessageTask> {
+            @Override
+            public int compare(MessageTask m1, MessageTask m2) {
+                return Double.compare(m2.score, m1.score);
+            }
+        }
+
     }
+
+
 }
 

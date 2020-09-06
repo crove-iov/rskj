@@ -178,17 +178,19 @@ public class Wallet {
         Account account = new Account(ECKey.fromPrivate(privateKeyBytes));
         synchronized (accessLock) {
             RskAddress addr = addAccount(account);
-            this.initialAccounts.add(addr);
+            if (!this.initialAccounts.contains(addr)) {
+                this.initialAccounts.add(addr);
+            }
             return addr.getBytes();
         }
     }
 
-    public byte[] addAccountWithPrivateKey(byte[] privateKeyBytes, String passphrase) {
+    public RskAddress addAccountWithPrivateKey(byte[] privateKeyBytes, String passphrase) {
         Account account = new Account(ECKey.fromPrivate(privateKeyBytes));
 
         saveAccount(account, passphrase);
 
-        return account.getAddress().getBytes();
+        return account.getAddress();
     }
 
     private void saveAccount(Account account) {

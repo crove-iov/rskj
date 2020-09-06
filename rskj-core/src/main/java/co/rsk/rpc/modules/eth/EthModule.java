@@ -39,8 +39,6 @@ import org.ethereum.db.MutableRepository;
 import org.ethereum.rpc.TypeConverter;
 import org.ethereum.rpc.Web3;
 import org.ethereum.rpc.converters.CallArgumentsToByteArray;
-import org.ethereum.rpc.dto.CompilationResultDTO;
-import org.ethereum.rpc.exception.JsonRpcInvalidParamException;
 import org.ethereum.rpc.exception.RskJsonRpcRequestException;
 import org.ethereum.vm.PrecompiledContracts;
 import org.ethereum.vm.program.ProgramResult;
@@ -52,10 +50,11 @@ import java.util.Map;
 
 import static org.ethereum.rpc.TypeConverter.stringHexToBigInteger;
 import static org.ethereum.rpc.TypeConverter.toJsonHex;
+import static org.ethereum.rpc.exception.RskJsonRpcRequestException.invalidParamError;
 
 // TODO add all RPC methods
 public class EthModule
-    implements EthModuleSolidity, EthModuleWallet, EthModuleTransaction {
+    implements EthModuleWallet, EthModuleTransaction {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("web3");
 
@@ -64,7 +63,6 @@ public class EthModule
     private final ReversibleTransactionExecutor reversibleTransactionExecutor;
     private final ExecutionBlockRetriever executionBlockRetriever;
     private final RepositoryLocator repositoryLocator;
-    private final EthModuleSolidity ethModuleSolidity;
     private final EthModuleWallet ethModuleWallet;
     private final EthModuleTransaction ethModuleTransaction;
     private final BridgeConstants bridgeConstants;
@@ -79,7 +77,6 @@ public class EthModule
             ReversibleTransactionExecutor reversibleTransactionExecutor,
             ExecutionBlockRetriever executionBlockRetriever,
             RepositoryLocator repositoryLocator,
-            EthModuleSolidity ethModuleSolidity,
             EthModuleWallet ethModuleWallet,
             EthModuleTransaction ethModuleTransaction,
             BridgeSupportFactory bridgeSupportFactory) {
@@ -89,7 +86,6 @@ public class EthModule
         this.reversibleTransactionExecutor = reversibleTransactionExecutor;
         this.executionBlockRetriever = executionBlockRetriever;
         this.repositoryLocator = repositoryLocator;
-        this.ethModuleSolidity = ethModuleSolidity;
         this.ethModuleWallet = ethModuleWallet;
         this.ethModuleTransaction = ethModuleTransaction;
         this.bridgeConstants = bridgeConstants;
@@ -110,7 +106,7 @@ public class EthModule
 
         byte[] result = bridgeSupport.getStateForDebugging();
 
-        BridgeState state = BridgeState.create(bridgeConstants, result);
+        BridgeState state = BridgeState.create(bridgeConstants, result, null);
 
         return state.stateToMap();
     }
@@ -134,11 +130,6 @@ public class EthModule
         } finally {
             LOGGER.debug("eth_call(): {}", s);
         }
-    }
-
-    @Override
-    public Map<String, CompilationResultDTO> compileSolidity(String contract) throws Exception {
-        return ethModuleSolidity.compileSolidity(contract);
     }
 
     public String estimateGas(Web3.CallArguments args) {
@@ -217,7 +208,7 @@ public class EthModule
                     }
                     return null;
                 } catch (NumberFormatException | StringIndexOutOfBoundsException e) {
-                    throw new JsonRpcInvalidParamException("invalid blocknumber " + id);
+                    throw invalidParamError("invalid blocknumber " + id);
                 }
         }
     }

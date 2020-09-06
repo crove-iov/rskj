@@ -20,18 +20,17 @@
 package org.ethereum.core.genesis;
 
 import co.rsk.core.BlockDifficulty;
-import co.rsk.core.bc.BlockChainFlusher;
 import co.rsk.core.bc.BlockChainImpl;
 import co.rsk.core.bc.BlockExecutor;
 import co.rsk.db.StateRootHandler;
 import co.rsk.validators.BlockValidator;
-import org.bouncycastle.util.encoders.Hex;
 import org.ethereum.core.Block;
 import org.ethereum.core.Genesis;
 import org.ethereum.core.TransactionPool;
 import org.ethereum.db.BlockStore;
 import org.ethereum.db.ReceiptStore;
 import org.ethereum.listener.EthereumListener;
+import org.ethereum.util.ByteUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,7 +43,6 @@ public class BlockChainLoader {
 
     private static final Logger logger = LoggerFactory.getLogger("general");
 
-    private final BlockChainFlusher flusher;
     private final BlockStore blockStore;
     private final ReceiptStore receiptStore;
     private final TransactionPool transactionPool;
@@ -55,7 +53,6 @@ public class BlockChainLoader {
     private final StateRootHandler stateRootHandler;
 
     public BlockChainLoader(
-            BlockChainFlusher flusher,
             BlockStore blockStore,
             ReceiptStore receiptStore,
             TransactionPool transactionPool,
@@ -65,7 +62,6 @@ public class BlockChainLoader {
             Genesis genesis,
             StateRootHandler stateRootHandler) {
         this.blockStore = blockStore;
-        this.flusher = flusher;
         this.receiptStore = receiptStore;
         this.transactionPool = transactionPool;
         this.listener = listener;
@@ -93,11 +89,10 @@ public class BlockChainLoader {
             logger.info("*** Loaded up to block [{}] totalDifficulty [{}] with stateRoot [{}]",
                     bestBlock.getNumber(),
                     totalDifficulty,
-                    Hex.toHexString(bestBlock.getStateRoot()));
+                    ByteUtil.toHexString(bestBlock.getStateRoot()));
         }
 
         BlockChainImpl blockchain = new BlockChainImpl(
-                flusher,
                 blockStore,
                 receiptStore,
                 transactionPool,

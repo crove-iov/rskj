@@ -20,12 +20,13 @@ package co.rsk.vm;
 
 import co.rsk.config.TestSystemProperties;
 import co.rsk.config.VmConfig;
-import org.bouncycastle.util.encoders.Hex;
+import co.rsk.core.Coin;
+import co.rsk.core.RskAddress;
+import org.ethereum.config.Constants;
 import org.ethereum.config.blockchain.upgrades.ActivationConfig;
 import org.ethereum.core.BlockFactory;
-import org.ethereum.vm.DataWord;
-import org.ethereum.vm.PrecompiledContracts;
-import org.ethereum.vm.VM;
+import org.ethereum.util.ByteUtil;
+import org.ethereum.vm.*;
 import org.ethereum.vm.program.Program;
 import org.ethereum.vm.program.Stack;
 import org.ethereum.vm.program.invoke.ProgramInvokeMockImpl;
@@ -37,7 +38,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.HashSet;
 
-import static org.ethereum.config.blockchain.upgrades.ConsensusRule.RSKIP120;
+import static org.ethereum.config.blockchain.upgrades.ConsensusRule.*;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -47,9 +48,9 @@ import static org.mockito.Mockito.when;
  */
 public class VMExecutionTest {
     private final TestSystemProperties config = new TestSystemProperties();
-    private final VmConfig vmConfig = config.getVmConfig();
     private final PrecompiledContracts precompiledContracts = new PrecompiledContracts(config, null);
     private final BlockFactory blockFactory = new BlockFactory(config.getActivationConfig());
+    private VmConfig vmConfig = config.getVmConfig();
     private ProgramInvokeMockImpl invoke;
     private BytecodeCompiler compiler;
 
@@ -515,7 +516,7 @@ public class VMExecutionTest {
     }
 
     @Test
-    public void txindexExecution() {
+    public void txIndexExecution() {
         invoke.setTransactionIndex(DataWord.valueOf(42));
         Program program = executeCode("TXINDEX", 1);
         Stack stack = program.getStack();
@@ -529,9 +530,8 @@ public class VMExecutionTest {
         try {
             executeCode("PUSH1 0x03 JUMP", 2);
             Assert.fail();
-        }
-        catch (Program.BadJumpDestinationException ex) {
-            Assert.assertEquals("Operation with pc isn't 'JUMPDEST': PC[3];", ex.getMessage());
+        } catch (Program.BadJumpDestinationException ex) {
+            Assert.assertEquals("Operation with pc isn't 'JUMPDEST': PC[3], tx[<null>]", ex.getMessage());
         }
     }
 
@@ -540,9 +540,8 @@ public class VMExecutionTest {
         try {
             executeCode("PUSH1 0x05 JUMP", 2);
             Assert.fail();
-        }
-        catch (Program.BadJumpDestinationException ex) {
-            Assert.assertEquals("Operation with pc isn't 'JUMPDEST': PC[5];", ex.getMessage());
+        } catch (Program.BadJumpDestinationException ex) {
+            Assert.assertEquals("Operation with pc isn't 'JUMPDEST': PC[5], tx[<null>]", ex.getMessage());
         }
     }
 
@@ -551,9 +550,8 @@ public class VMExecutionTest {
         try {
             executeCode("PUSH32 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff JUMP", 2);
             Assert.fail();
-        }
-        catch (Program.BadJumpDestinationException ex) {
-            Assert.assertEquals("Operation with pc isn't 'JUMPDEST': PC[-1];", ex.getMessage());
+        } catch (Program.BadJumpDestinationException ex) {
+            Assert.assertEquals("Operation with pc isn't 'JUMPDEST': PC[-1], tx[<null>]", ex.getMessage());
         }
     }
 
@@ -562,9 +560,8 @@ public class VMExecutionTest {
         try {
             executeCode("PUSH1 0xff JUMP", 2);
             Assert.fail();
-        }
-        catch (Program.BadJumpDestinationException ex) {
-            Assert.assertEquals("Operation with pc isn't 'JUMPDEST': PC[255];", ex.getMessage());
+        } catch (Program.BadJumpDestinationException ex) {
+            Assert.assertEquals("Operation with pc isn't 'JUMPDEST': PC[255], tx[<null>]", ex.getMessage());
         }
     }
 
@@ -672,6 +669,113 @@ public class VMExecutionTest {
         Assert.assertEquals(12, program.getResult().getGasUsed());
     }
 
+    @Test
+    public void chainIDMainnet(){
+        executeCHAINID(Constants.MAINNET_CHAIN_ID);
+    }
+
+    @Test
+    public void chainIDTestnet(){
+        executeCHAINID(Constants.TESTNET_CHAIN_ID);
+    }
+
+    @Test
+    public void chainIDRegtest(){
+        executeCHAINID(Constants.REGTEST_CHAIN_ID);
+    }
+
+    @Test
+    public void chainIDIsCorrectOpcodeNumber(){
+        Assert.assertEquals(0x46, OpCodes.OP_CHAINID);
+        Assert.assertEquals(OpCode.CHAINID, OpCode.code((byte) 0x46));
+    }
+
+    @Test(expected = Program.IllegalOperationException.class)
+    public void testChainIDNotActivated(){
+        ActivationConfig.ForBlock activations = mock(ActivationConfig.ForBlock.class);
+        when(activations.isActive(RSKIP152)).thenReturn(false);
+
+        executeCHAINIDWithActivations(Constants.REGTEST_CHAIN_ID, activations);
+    }
+
+    private void executeCHAINID(byte chainIDExpected) {
+        ActivationConfig.ForBlock activations = mock(ActivationConfig.ForBlock.class);
+        when(activations.isActive(RSKIP152)).thenReturn(true);
+
+        executeCHAINIDWithActivations(chainIDExpected, activations);
+    }
+
+    private void executeCHAINIDWithActivations(byte chainIDExpected, ActivationConfig.ForBlock activations) {
+        vmConfig = mock(VmConfig.class);
+        when(vmConfig.getChainId()).thenReturn(chainIDExpected);
+
+        Program program = executeCodeWithActivationConfig("CHAINID", 1, activations);
+
+        Stack stack = program.getStack();
+
+        Assert.assertEquals(1, stack.size());
+        Assert.assertEquals(DataWord.valueOf(chainIDExpected), stack.peek());
+    }
+
+    @Test(expected = Program.IllegalOperationException.class)
+    public void selfBalanceFailsWithRSKIPNotActivated() {
+        ActivationConfig.ForBlock activations = mock(ActivationConfig.ForBlock.class);
+        when(activations.isActive(RSKIP151)).thenReturn(false);
+
+        executeCodeWithActivationConfig("SELFBALANCE", 1, activations);
+    }
+
+    @Test
+    public void selfBalanceRunsCorrectly() {
+        ActivationConfig.ForBlock activations = mock(ActivationConfig.ForBlock.class);
+        when(activations.isActive(RSKIP151)).thenReturn(true);
+
+        int balanceValue = 100;
+
+        RskAddress testAddress = new RskAddress(invoke.getCallerAddress());
+        invoke.setOwnerAddress(testAddress);
+        invoke.getRepository().addBalance(testAddress, Coin.valueOf(balanceValue));
+
+        Program program = executeCodeWithActivationConfig("SELFBALANCE", 1, activations);
+        Stack stack = program.getStack();
+
+        long selfBalanceGas = OpCode.SELFBALANCE.getTier().asInt();
+
+        Assert.assertEquals(selfBalanceGas, program.getResult().getGasUsed());
+        Assert.assertEquals(1, stack.size());
+        Assert.assertEquals(DataWord.valueOf(balanceValue), stack.peek());
+    }
+
+    @Test
+    public void selfBalanceIsSameAsBalance() {
+        ActivationConfig.ForBlock activations = mock(ActivationConfig.ForBlock.class);
+        when(activations.isActive(RSKIP151)).thenReturn(true);
+
+        int balanceValue = 100;
+
+        RskAddress testAddress = new RskAddress(invoke.getCallerAddress());
+        invoke.setOwnerAddress(testAddress);
+        invoke.getRepository().addBalance(testAddress, Coin.valueOf(balanceValue));
+
+        Program programSelfBalance = executeCodeWithActivationConfig("SELFBALANCE",1, activations);
+        Stack stackSelfBalance = programSelfBalance.getStack();
+
+        Program programBalance = executeCodeWithActivationConfig("PUSH20 0x" + testAddress.toHexString() +
+                " BALANCE", 2, activations);
+        Stack stackBalance = programBalance.getStack();
+
+        Assert.assertEquals(1, stackSelfBalance.size());
+
+        DataWord selfBalance = stackSelfBalance.pop();
+        DataWord balance = stackBalance.pop();
+
+        long selfBalanceGas = OpCode.SELFBALANCE.getTier().asInt();
+
+        Assert.assertEquals(selfBalanceGas, programSelfBalance.getResult().getGasUsed());
+        Assert.assertEquals(selfBalance, DataWord.valueOf(balanceValue));
+        Assert.assertEquals(balance, selfBalance);
+    }
+
     private Program executeCode(String code, int nsteps) {
         return executeCodeWithActivationConfig(compiler.compile(code), nsteps, mock(ActivationConfig.ForBlock.class));
     }
@@ -679,7 +783,7 @@ public class VMExecutionTest {
     private void testCode(byte[] code, int nsteps, String expected) {
         Program program = executeCodeWithActivationConfig(code, nsteps, mock(ActivationConfig.ForBlock.class));
 
-        assertEquals(expected, Hex.toHexString(program.getStack().peek().getData()).toUpperCase());
+        assertEquals(expected, ByteUtil.toHexString(program.getStack().peek().getData()).toUpperCase());
     }
 
     private Program executeCodeWithActivationConfig(String code, int nsteps, ActivationConfig.ForBlock activations) {

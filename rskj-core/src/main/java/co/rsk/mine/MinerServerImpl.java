@@ -40,6 +40,9 @@ import org.ethereum.core.*;
 import org.ethereum.facade.Ethereum;
 import org.ethereum.listener.EthereumListenerAdapter;
 import org.ethereum.rpc.TypeConverter;
+import org.ethereum.util.BuildInfo;
+import org.ethereum.util.RLP;
+import org.ethereum.util.RLPList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,6 +68,9 @@ public class MinerServerImpl implements MinerServer {
     private static final PanicProcessor panicProcessor = new PanicProcessor();
 
     private static final int CACHE_SIZE = 20;
+
+    private static final int EXTRA_DATA_MAX_SIZE = 32;
+    private static final int EXTRA_DATA_VERSION = 1;
 
     private final Ethereum ethereum;
     private final MiningMainchainView mainchainView;
@@ -108,6 +114,7 @@ public class MinerServerImpl implements MinerServer {
             BlockToMineBuilder builder,
             MinerClock clock,
             BlockFactory blockFactory,
+            BuildInfo buildInfo,
             MiningConfig miningConfig) {
         this.ethereum = ethereum;
         this.mainchainView = mainchainView;
@@ -125,6 +132,13 @@ public class MinerServerImpl implements MinerServer {
         coinbaseAddress = miningConfig.getCoinbaseAddress();
         minFeesNotifyInDollars = BigDecimal.valueOf(miningConfig.getMinFeesNotifyInDollars());
         gasUnitInDollars = BigDecimal.valueOf(miningConfig.getGasUnitInDollars());
+
+        extraData = buildExtraData(config, buildInfo);
+    }
+
+    private byte[] buildExtraData(RskSystemProperties config, BuildInfo buildInfo) {
+        String identity = config.projectVersionModifier() + "-" + buildInfo.getBuildHash();
+        return RLP.encodeList(RLP.encodeElement(RLP.encodeInt(EXTRA_DATA_VERSION)), RLP.encodeString(identity));
     }
 
     private LinkedHashMap<Keccak256, Block> createNewBlocksWaitingList() {
@@ -268,14 +282,14 @@ public class MinerServerImpl implements MinerServer {
         newBlock.seal();
 
         if (!isValid(newBlock)) {
-            String message = "Invalid block supplied by miner: " + newBlock.getShortHash() + " " + newBlock.getShortHashForMergedMining() + " at height " + newBlock.getNumber();
+            String message = "Invalid block supplied by miner: " + newBlock.getPrintableHash() + " " + newBlock.getPrintableHashForMergedMining() + " at height " + newBlock.getNumber();
             logger.error(message);
 
             return new SubmitBlockResult("ERROR", message);
         } else {
             ImportResult importResult = ethereum.addNewMinedBlock(newBlock);
 
-            logger.info("Mined block import result is {}: {} {} at height {}", importResult, newBlock.getShortHash(), newBlock.getShortHashForMergedMining(), newBlock.getNumber());
+            logger.info("Mined block import result is {}: {} {} at height {}", importResult, newBlock.getPrintableHash(), newBlock.getPrintableHashForMergedMining(), newBlock.getNumber());
             SubmittedBlockInfo blockInfo = new SubmittedBlockInfo(importResult, newBlock.getHash().getBytes(), newBlock.getNumber());
 
             return new SubmitBlockResult("OK", "OK", blockInfo);
@@ -286,7 +300,7 @@ public class MinerServerImpl implements MinerServer {
         try {
             return powRule.isValid(block);
         } catch (Exception e) {
-            logger.error("Failed to validate PoW from block {}: {}", block.getShortHash(), e);
+            logger.error("Failed to validate PoW from block {}: {}", block.getPrintableHash(), e);
             return false;
         }
     }
@@ -372,12 +386,28 @@ public class MinerServerImpl implements MinerServer {
         byte[] targetArray = new byte[32];
         System.arraycopy(targetUnknownLengthArray, 0, targetArray, 32 - targetUnknownLengthArray.length, targetUnknownLengthArray.length);
 
-        logger.debug("Sending work for merged mining. Hash: {}", block.getShortHashForMergedMining());
+        logger.debug("Sending work for merged mining. Hash: {}", block.getPrintableHashForMergedMining());
         return new MinerWork(blockMergedMiningHash.toJsonString(), TypeConverter.toJsonHex(targetArray), String.valueOf(block.getFeesPaidToMiner()), notify, block.getParentHashJsonString());
     }
 
-    public void setExtraData(byte[] extraData) {
-        this.extraData = extraData;
+    public void setExtraData(byte[] clientExtraData) {
+        RLPList decodedExtraData = RLP.decodeList(this.extraData);
+        byte[] version = decodedExtraData.get(0).getRLPData();
+        byte[] identity = decodedExtraData.get(1).getRLPData();
+
+        int rlpClientExtraDataEncodingOverhead = 3;
+        int clientExtraDataSize = EXTRA_DATA_MAX_SIZE
+                - (version != null ? version.length : 0)
+                - (identity != null ? identity.length : 0)
+                - rlpClientExtraDataEncodingOverhead;
+        byte[] clientExtraDataResized = Arrays.copyOf(clientExtraData, Math.min(clientExtraData.length, clientExtraDataSize));
+
+        this.extraData = RLP.encodeList(version, RLP.encode(identity), RLP.encodeElement(clientExtraDataResized));
+    }
+
+    @VisibleForTesting
+    public byte[] getExtraData() {
+        return Arrays.copyOf(extraData, extraData.length);
     }
 
     /**
@@ -435,9 +465,9 @@ public class MinerServerImpl implements MinerServer {
             logger.debug("blocksWaitingForPoW size {}", blocksWaitingforPoW.size());
         }
 
-        logger.debug("Built block {}. Parent {}", newBlock.getShortHashForMergedMining(), newBlockParentHeader.getShortHashForMergedMining());
+        logger.debug("Built block {}. Parent {}", newBlock.getPrintableHashForMergedMining(), newBlockParentHeader.getPrintableHashForMergedMining());
         for (BlockHeader uncleHeader : newBlock.getUncleList()) {
-            logger.debug("With uncle {}", uncleHeader.getShortHashForMergedMining());
+            logger.debug("With uncle {}", uncleHeader.getPrintableHashForMergedMining());
         }
     }
 
@@ -483,7 +513,7 @@ public class MinerServerImpl implements MinerServer {
 
             logger.debug(
                     "There is a new best block: {}, number: {}",
-                    newBestBlock.getShortHashForMergedMining(),
+                    newBestBlock.getPrintableHashForMergedMining(),
                     newBestBlock.getNumber());
             mainchainView.addBest(newBestBlock.getHeader());
             buildBlockToMine(false);

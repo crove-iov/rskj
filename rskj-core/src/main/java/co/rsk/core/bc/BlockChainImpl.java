@@ -77,7 +77,6 @@ public class BlockChainImpl implements Blockchain {
     private static final Logger logger = LoggerFactory.getLogger("blockchain");
     private static final PanicProcessor panicProcessor = new PanicProcessor();
 
-    private final BlockChainFlusher flusher;
     private final BlockStore blockStore;
     private final ReceiptStore receiptStore;
     private final TransactionPool transactionPool;
@@ -94,15 +93,13 @@ public class BlockChainImpl implements Blockchain {
     private final BlockExecutor blockExecutor;
     private boolean noValidation;
 
-    public BlockChainImpl(BlockChainFlusher flusher,
-                          BlockStore blockStore,
+    public BlockChainImpl(BlockStore blockStore,
                           ReceiptStore receiptStore,
                           TransactionPool transactionPool,
                           EthereumListener listener,
                           BlockValidator blockValidator,
                           BlockExecutor blockExecutor,
                           StateRootHandler stateRootHandler) {
-        this.flusher = flusher;
         this.blockStore = blockStore;
         this.receiptStore = receiptStore;
         this.listener = listener;
@@ -147,8 +144,11 @@ public class BlockChainImpl implements Blockchain {
             }
 
             try {
+                org.slf4j.MDC.put("blockHash", block.getHash().toHexString());
+                org.slf4j.MDC.put("blockHeight", Long.toString(block.getNumber()));
+
                 logger.trace("Try connect block hash: {}, number: {}",
-                             block.getShortHash(),
+                             block.getPrintableHash(),
                              block.getNumber());
 
                 synchronized (connectLock) {
@@ -156,17 +156,23 @@ public class BlockChainImpl implements Blockchain {
                     long saveTime = System.nanoTime();
                     ImportResult result = internalTryToConnect(block);
                     long totalTime = System.nanoTime() - saveTime;
-                    logger.info("block: num: [{}] hash: [{}], processed after: [{}]nano, result {}", block.getNumber(), block.getShortHash(), totalTime, result);
+                    logger.info("block: num: [{}] hash: [{}], processed after: [{}]nano, result {}", block.getNumber(), block.getPrintableHash(), totalTime, result);
                     return result;
                 }
             } catch (Throwable t) {
                 logger.error("Unexpected error: ", t);
                 return ImportResult.INVALID_BLOCK;
             }
+            finally {
+                org.slf4j.MDC.remove("blockHash");
+                org.slf4j.MDC.remove("blockHeight");
+
+            }
         }
         finally {
             this.lock.readLock().unlock();
         }
+
     }
 
     private ImportResult internalTryToConnect(Block block) {
@@ -175,7 +181,7 @@ public class BlockChainImpl implements Blockchain {
         if (blockStore.getBlockByHash(block.getHash().getBytes()) != null &&
                 !BlockDifficulty.ZERO.equals(blockStore.getTotalDifficultyForHash(block.getHash().getBytes()))) {
             logger.debug("Block already exist in chain hash: {}, number: {}",
-                         block.getShortHash(),
+                         block.getPrintableHash(),
                          block.getNumber());
             profiler.stop(metric);
             return ImportResult.EXIST;
@@ -251,7 +257,7 @@ public class BlockChainImpl implements Blockchain {
             // to the parent's repository.
 
             long totalTime = System.nanoTime() - saveTime;
-            logger.trace("block: num: [{}] hash: [{}], executed after: [{}]nano", block.getNumber(), block.getShortHash(), totalTime);
+            logger.trace("block: num: [{}] hash: [{}], executed after: [{}]nano", block.getNumber(), block.getPrintableHash(), totalTime);
 
             // the block is valid at this point
             stateRootHandler.register(block.getHeader(), result.getFinalState());
@@ -267,10 +273,8 @@ public class BlockChainImpl implements Blockchain {
         if (SelectionRule.shouldWeAddThisBlock(totalDifficulty, status.getTotalDifficulty(),block, bestBlock)) {
             if (bestBlock != null && !bestBlock.isParentOf(block)) {
                 logger.trace("Rebranching: {} ~> {} From block {} ~> {} Difficulty {} Challenger difficulty {}",
-                        bestBlock.getShortHash(), block.getShortHash(), bestBlock.getNumber(), block.getNumber(),
+                        bestBlock.getPrintableHash(), block.getPrintableHash(), bestBlock.getNumber(), block.getNumber(),
                         status.getTotalDifficulty(), totalDifficulty);
-                BlockFork fork = new BlockFork();
-                fork.calculate(bestBlock, block, blockStore);
                 blockStore.reBranch(block);
             }
 
@@ -285,9 +289,8 @@ public class BlockChainImpl implements Blockchain {
             logger.trace("Start onBlock");
             onBlock(block, result);
             logger.trace("Start flushData");
-            flusher.flush();
 
-            logger.trace("Better block {} {}", block.getNumber(), block.getShortHash());
+            logger.trace("Better block {} {}", block.getNumber(), block.getPrintableHash());
 
             logger.debug("block added to the blockChain: index: [{}]", block.getNumber());
             if (block.getNumber() % 100 == 0) {
@@ -301,7 +304,7 @@ public class BlockChainImpl implements Blockchain {
         else {
             if (bestBlock != null && !bestBlock.isParentOf(block)) {
                 logger.trace("No rebranch: {} ~> {} From block {} ~> {} Difficulty {} Challenger difficulty {}",
-                        bestBlock.getShortHash(), block.getShortHash(), bestBlock.getNumber(), block.getNumber(),
+                        bestBlock.getPrintableHash(), block.getPrintableHash(), bestBlock.getNumber(), block.getNumber(),
                         status.getTotalDifficulty(), totalDifficulty);
             }
 
@@ -312,13 +315,12 @@ public class BlockChainImpl implements Blockchain {
             logger.trace("Start onBlock");
             onBlock(block, result);
             logger.trace("Start flushData");
-            flusher.flush();
 
             if (bestBlock != null && block.getNumber() > bestBlock.getNumber()) {
                 logger.warn("Strange block number state");
             }
 
-            logger.trace("Block not imported {} {}", block.getNumber(), block.getShortHash());
+            logger.trace("Block not imported {} {}", block.getNumber(), block.getPrintableHash());
             profiler.stop(metric);
             return ImportResult.IMPORTED_NOT_BEST;
         }
@@ -448,7 +450,7 @@ public class BlockChainImpl implements Blockchain {
     private void storeBlock(Block block, BlockDifficulty totalDifficulty, boolean inBlockChain) {
         blockStore.saveBlock(block, totalDifficulty, inBlockChain);
         logger.trace("Block saved: number: {}, hash: {}, TD: {}",
-                block.getNumber(), block.getShortHash(), totalDifficulty);
+                block.getNumber(), block.getPrintableHash(), totalDifficulty);
     }
 
     private void saveReceipts(Block block, BlockResult result) {
@@ -464,8 +466,11 @@ public class BlockChainImpl implements Blockchain {
     }
 
     private void processBest(final Block block) {
+        logger.debug("Starting to run transactionPool.processBest(block)");
         // this has to happen in the same thread so the TransactionPool is immediately aware of the new best block
         transactionPool.processBest(block);
+        logger.debug("Finished running transactionPool.processBest(block)");
+
     }
 
     private void onBlock(Block block, BlockResult result) {

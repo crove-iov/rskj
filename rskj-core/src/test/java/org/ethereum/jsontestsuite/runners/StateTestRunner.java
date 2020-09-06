@@ -19,19 +19,19 @@
 
 package org.ethereum.jsontestsuite.runners;
 
+import co.rsk.config.BridgeRegTestConstants;
 import co.rsk.config.TestSystemProperties;
-import co.rsk.core.Coin;
 import co.rsk.core.RskAddress;
 import co.rsk.core.TransactionExecutorFactory;
-import co.rsk.core.bc.BlockChainFlusher;
 import co.rsk.core.bc.BlockChainImpl;
 import co.rsk.core.bc.BlockExecutor;
 import co.rsk.db.HashMapBlocksIndex;
 import co.rsk.db.RepositoryLocator;
 import co.rsk.db.StateRootHandler;
+import co.rsk.peg.BridgeSupportFactory;
+import co.rsk.peg.RepositoryBtcBlockStoreWithCache;
 import co.rsk.trie.TrieConverter;
 import co.rsk.trie.TrieStoreImpl;
-import org.bouncycastle.util.encoders.Hex;
 import org.ethereum.core.*;
 import org.ethereum.datasource.HashMapDB;
 import org.ethereum.db.BlockStore;
@@ -57,9 +57,11 @@ import org.ethereum.vm.program.invoke.ProgramInvokeFactoryImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
 
-import static org.ethereum.crypto.HashUtil.EMPTY_TRIE_HASH;
 import static org.ethereum.util.ByteUtil.byteArrayToLong;
 
 public class StateTestRunner {
@@ -68,6 +70,12 @@ public class StateTestRunner {
     private static Logger logger = LoggerFactory.getLogger("TCK-Test");
     private final TestSystemProperties config = new TestSystemProperties();
     private final BlockFactory blockFactory = new BlockFactory(config.getActivationConfig());
+    private final RepositoryBtcBlockStoreWithCache.Factory blockStoreWithCache = new RepositoryBtcBlockStoreWithCache.Factory(
+            config.getNetworkConstants().bridgeConstants.getBtcParams()
+    );
+
+    private final BridgeSupportFactory bridgeSupportFactory = new BridgeSupportFactory(
+           blockStoreWithCache, BridgeRegTestConstants.getInstance(), config.getActivationConfig());
 
     public static List<String> run(StateTestCase stateTestCase2) {
         return new StateTestRunner(stateTestCase2).runImpl();
@@ -87,7 +95,7 @@ public class StateTestRunner {
     public StateTestRunner(StateTestCase stateTestCase) {
         this.stateTestCase = stateTestCase;
         setstateTestUSeREMASC(false);
-        precompiledContracts = new PrecompiledContracts(config, null);
+        precompiledContracts = new PrecompiledContracts(config, bridgeSupportFactory);
     }
 
     public StateTestRunner setstateTestUSeREMASC(boolean v) {
@@ -104,15 +112,13 @@ public class StateTestRunner {
                 null,
                 blockFactory,
                 invokeFactory,
-                precompiledContracts);
+                precompiledContracts,
+                new BlockTxSignatureCache(new ReceivedTxSignatureCache()));
         TransactionExecutor executor = transactionExecutorFactory
                 .newInstance(transaction, 0, new RskAddress(env.getCurrentCoinbase()), track, blockchain.getBestBlock(), 0);
 
         try{
-            executor.init();
-            executor.execute();
-            executor.go();
-            executor.finalization();
+            executor.executeTransaction();
         } catch (StackOverflowError soe){
             logger.error(" !!! StackOverflowError: update your java run command with -Xss32M !!!");
             System.exit(-1);
@@ -134,7 +140,6 @@ public class StateTestRunner {
         BlockStore blockStore = new IndexedBlockStore(blockFactory, new HashMapDB(), new HashMapBlocksIndex());
         StateRootHandler stateRootHandler = new StateRootHandler(config.getActivationConfig(), new TrieConverter(), new HashMapDB(), new HashMap<>());
         blockchain = new BlockChainImpl(
-                new BlockChainFlusher(false, 1, trieStore, blockStore),
                 blockStore,
                 null,
                 null,
@@ -150,7 +155,8 @@ public class StateTestRunner {
                                 null,
                                 blockFactory,
                                 new ProgramInvokeFactoryImpl(),
-                                precompiledContracts
+                                precompiledContracts,
+                                new BlockTxSignatureCache(new ReceivedTxSignatureCache())
                         )
                 ),
                 stateRootHandler
@@ -183,7 +189,7 @@ public class StateTestRunner {
 
         logger.info("--------- POST Validation---------");
         List<String> outputResults =
-                OutputValidator.valid(Hex.toHexString(programResult.getHReturn()), stateTestCase.getOut(),vStats);
+                OutputValidator.valid(ByteUtil.toHexString(programResult.getHReturn()), stateTestCase.getOut(),vStats);
 
         List<String> results = new ArrayList<>();
         results.addAll(repoResults);
@@ -207,17 +213,23 @@ public class StateTestRunner {
 
     public static final byte[] ZERO32_BYTE_ARRAY = new byte[32];
     public Block build(Env env) {
+        BlockHeader newHeader = blockFactory.getBlockHeaderBuilder()
+                // Don't use the empty parent hash because it's used to log and
+                // when log entries are printed with empty parent hash it throws
+                // an exception.
+                .setParentHash(ZERO32_BYTE_ARRAY)
+                .setCoinbase(new RskAddress(env.getCurrentCoinbase()))
+                .setDifficultyFromBytes(env.getCurrentDifficulty())
+                .setNumber(byteArrayToLong(env.getCurrentNumber()))
+                .setGasLimit(env.getCurrentGasLimit())
+                .setGasUsed(0)
+                .setTimestamp(byteArrayToLong(env.getCurrentTimestamp()))
+                .setExtraData(new byte[32])
+                .setUncleCount(0)
+                .build();
+
         return blockFactory.newBlock(
-                blockFactory.newHeader(
-                        // Don't use the empty parent hash because it's used to log and
-                        // when log entries are printed with empty parent hash it throws
-                        // an exception.
-                        ZERO32_BYTE_ARRAY , ByteUtil.EMPTY_BYTE_ARRAY, env.getCurrentCoinbase(),
-                        EMPTY_TRIE_HASH, EMPTY_TRIE_HASH, EMPTY_TRIE_HASH,
-                        ByteUtil.EMPTY_BYTE_ARRAY, env.getCurrentDifficulty(), byteArrayToLong(env.getCurrentNumber()),
-                        env.getCurrentGasLimit(), 0L, byteArrayToLong(env.getCurrentTimestamp()),
-                        new byte[32], Coin.ZERO, ZERO_BYTE_ARRAY, ZERO_BYTE_ARRAY, ZERO_BYTE_ARRAY, ZERO_BYTE_ARRAY,null, 0
-                ),
+                newHeader,
                 Collections.emptyList(),
                 Collections.emptyList(),
                 false

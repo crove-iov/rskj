@@ -33,6 +33,7 @@ import org.ethereum.crypto.Keccak256Helper;
 import org.ethereum.net.p2p.P2pHandler;
 import org.ethereum.net.rlpx.MessageCodec;
 import org.ethereum.net.rlpx.Node;
+import org.ethereum.util.ByteUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,10 +67,12 @@ public abstract class SystemProperties {
 
     public static final String PROPERTY_BLOCKCHAIN_CONFIG = "blockchain.config";
     public static final String PROPERTY_BC_CONFIG_NAME = PROPERTY_BLOCKCHAIN_CONFIG + ".name";
+    public static final String PROPERTY_BC_VERIFY = PROPERTY_BLOCKCHAIN_CONFIG + ".verify";
     public static final String PROPERTY_GENESIS_CONSTANTS_FEDERATION_PUBLICKEYS = "genesis_constants.federationPublicKeys";
     public static final String PROPERTY_PEER_PORT = "peer.port";
     public static final String PROPERTY_BASE_PATH = "database.dir";
     public static final String PROPERTY_DB_RESET = "database.reset";
+    public static final String PROPERTY_DB_IMPORT = "database.import.enabled";
     // TODO review rpc properties
     public static final String PROPERTY_RPC_CORS = "rpc.providers.web.cors";
     public static final String PROPERTY_RPC_HTTP_ENABLED = "rpc.providers.web.http.enabled";
@@ -85,7 +88,6 @@ public abstract class SystemProperties {
 
     /* Testing */
     private static final Boolean DEFAULT_VMTEST_LOAD_LOCAL = false;
-    private static final String DEFAULT_BLOCKS_LOADER = "";
 
     protected final Config configFromFiles;
 
@@ -97,9 +99,6 @@ public abstract class SystemProperties {
     private String genesisInfo = null;
 
     private String publicIp = null;
-
-    private Boolean syncEnabled = null;
-    private Boolean discoveryEnabled = null;
 
     private ActivationConfig activationConfig;
     private Constants constants;
@@ -179,11 +178,7 @@ public abstract class SystemProperties {
     }
 
     public boolean isPeerDiscoveryEnabled() {
-        return discoveryEnabled == null ? configFromFiles.getBoolean("peer.discovery.enabled") : discoveryEnabled;
-    }
-
-    public void setDiscoveryEnabled(Boolean discoveryEnabled) {
-        this.discoveryEnabled = discoveryEnabled;
+        return configFromFiles.getBoolean("peer.discovery.enabled");
     }
 
     public int peerConnectionTimeout() {
@@ -206,7 +201,17 @@ public abstract class SystemProperties {
         return configFromFiles.getBoolean("database.reset");
     }
 
+    public boolean importEnabled() {
+        return configFromFiles.getBoolean(PROPERTY_DB_IMPORT);
+    }
 
+    public String importUrl() {
+        return configFromFiles.getString("database.import.url");
+    }
+
+    public List<String> importTrustedKeys() {
+        return configFromFiles.getStringList("database.import.trusted-keys");
+    }
 
     public List<Node> peerActive() {
         if (!configFromFiles.hasPath("peer.active")) {
@@ -321,6 +326,10 @@ public abstract class SystemProperties {
         return configFromFiles.getBoolean("vm.structured.trace");
     }
 
+    public int vmTraceOptions() {
+        return configFromFiles.getInt("vm.structured.traceOptions");
+    }
+
     public boolean vmTraceCompressed() {
         return configFromFiles.getBoolean("vm.structured.compressed");
     }
@@ -353,8 +362,8 @@ public abstract class SystemProperties {
                 props.load(new FileReader(file));
             } else {
                 ECKey key = new ECKey();
-                props.setProperty("nodeIdPrivateKey", Hex.toHexString(key.getPrivKeyBytes()));
-                props.setProperty("nodeId", Hex.toHexString(key.getNodeId()));
+                props.setProperty("nodeIdPrivateKey", ByteUtil.toHexString(key.getPrivKeyBytes()));
+                props.setProperty("nodeId", ByteUtil.toHexString(key.getNodeId()));
                 file.getParentFile().mkdirs();
                 props.store(new FileWriter(file), "Generated NodeID. To use your own nodeId please refer to 'peer.privateKey' config option.");
                 logger.info("New nodeID generated: {}", props.getProperty("nodeId"));
@@ -474,11 +483,7 @@ public abstract class SystemProperties {
     }
 
     public boolean isSyncEnabled() {
-        return this.syncEnabled == null ? configFromFiles.getBoolean("sync.enabled") : syncEnabled;
-    }
-
-    public void setSyncEnabled(Boolean syncEnabled) {
-        this.syncEnabled = syncEnabled;
+        return configFromFiles.getBoolean("sync.enabled");
     }
 
     public String genesisInfo() {
@@ -565,11 +570,6 @@ public abstract class SystemProperties {
     public boolean vmTestLoadLocal() {
         return configFromFiles.hasPath("GitHubTests.VMTest.loadLocal") ?
                 configFromFiles.getBoolean("GitHubTests.VMTest.loadLocal") : DEFAULT_VMTEST_LOAD_LOCAL;
-    }
-
-    public String blocksLoader() {
-        return configFromFiles.hasPath("blocks.loader") ?
-                configFromFiles.getString("blocks.loader") : DEFAULT_BLOCKS_LOADER;
     }
 
     public String customSolcPath() {

@@ -29,6 +29,7 @@ import co.rsk.db.StateRootHandler;
 import co.rsk.net.BlockNodeInformation;
 import co.rsk.net.BlockSyncService;
 import co.rsk.net.NodeBlockProcessor;
+import co.rsk.net.NetBlockStore;
 import co.rsk.net.sync.SyncConfiguration;
 import co.rsk.peg.BridgeSupportFactory;
 import co.rsk.peg.BtcBlockStoreWithCache.Factory;
@@ -40,6 +41,7 @@ import org.ethereum.core.*;
 import org.ethereum.datasource.HashMapDB;
 import org.ethereum.db.BlockStore;
 import org.ethereum.db.ReceiptStore;
+import org.ethereum.db.TransactionInfo;
 import org.ethereum.vm.PrecompiledContracts;
 import org.ethereum.vm.program.invoke.ProgramInvokeFactoryImpl;
 
@@ -59,9 +61,12 @@ public class World {
     private StateRootHandler stateRootHandler;
     private BlockStore blockStore;
     private TrieStore trieStore;
+    private ReceiptStore receiptStore;
     private Repository repository;
     private TransactionPool transactionPool;
     private BridgeSupportFactory bridgeSupportFactory;
+    private BlockTxSignatureCache blockTxSignatureCache;
+    private ReceivedTxSignatureCache receivedTxSignatureCache;
 
     public World() {
         this(new BlockChainBuilder());
@@ -72,18 +77,20 @@ public class World {
     }
 
     private World(BlockChainBuilder blockChainBuilder) {
-        this(blockChainBuilder.build(), blockChainBuilder.getBlockStore(), blockChainBuilder.getTrieStore(), blockChainBuilder.getRepository(), blockChainBuilder.getTransactionPool(), null);
+        this(blockChainBuilder.build(), blockChainBuilder.getBlockStore(), blockChainBuilder.getReceiptStore(), blockChainBuilder.getTrieStore(), blockChainBuilder.getRepository(), blockChainBuilder.getTransactionPool(), null);
     }
 
     public World(
             BlockChainImpl blockChain,
             BlockStore blockStore,
+            ReceiptStore receiptStore,
             TrieStore trieStore,
             Repository repository,
             TransactionPool transactionPool,
             Genesis genesis) {
         this.blockChain = blockChain;
         this.blockStore = blockStore;
+        this.receiptStore = receiptStore;
         this.trieStore = trieStore;
         this.repository = repository;
         this.transactionPool = transactionPool;
@@ -94,7 +101,7 @@ public class World {
         }
         this.saveBlock("g00", genesis);
 
-        co.rsk.net.BlockStore store = new co.rsk.net.BlockStore();
+        NetBlockStore store = new NetBlockStore();
         BlockNodeInformation nodeInformation = new BlockNodeInformation();
         SyncConfiguration syncConfiguration = SyncConfiguration.IMMEDIATE_FOR_TESTING;
         TestSystemProperties config = new TestSystemProperties();
@@ -107,6 +114,8 @@ public class World {
                         config.getNetworkConstants().getBridgeConstants().getBtcParams()),
                 config.getNetworkConstants().getBridgeConstants(),
                 config.getActivationConfig());
+        this.receivedTxSignatureCache = new ReceivedTxSignatureCache();
+        this.blockTxSignatureCache = new BlockTxSignatureCache(receivedTxSignatureCache);
     }
 
     public NodeBlockProcessor getBlockProcessor() { return this.blockProcessor; }
@@ -132,7 +141,8 @@ public class World {
                             null,
                             new BlockFactory(config.getActivationConfig()),
                             programInvokeFactory,
-                            new PrecompiledContracts(config, bridgeSupportFactory)
+                            new PrecompiledContracts(config, bridgeSupportFactory),
+                            blockTxSignatureCache
                     )
             );
         }
@@ -170,6 +180,21 @@ public class World {
 
     public Transaction getTransactionByName(String name) { return transactions.get(name); }
 
+    public TransactionReceipt getTransactionReceiptByName(String name) {
+        Transaction transaction = this.getTransactionByName(name);
+
+        TransactionInfo transactionInfo = this.receiptStore.get(transaction.getHash().getBytes());
+
+        if(transactionInfo == null) {
+            return null;
+        }
+        TransactionReceipt transactionReceipt = transactionInfo.getReceipt();
+
+        transactionReceipt.setTransaction(transaction);
+
+        return transactionReceipt;
+    }
+
     public void saveTransaction(String name, Transaction transaction) { transactions.put(name, transaction); }
 
     public Repository getRepository() {
@@ -195,4 +220,9 @@ public class World {
     public BlockStore getBlockStore() {
         return blockStore;
     }
+
+    public BlockTxSignatureCache getBlockTxSignatureCache() { return blockTxSignatureCache; }
+
+    public ReceivedTxSignatureCache getReceivedTxSignatureCache() { return receivedTxSignatureCache; }
+
 }

@@ -25,20 +25,27 @@ import co.rsk.core.bc.BlockChainImpl;
 import co.rsk.core.bc.MiningMainchainView;
 import co.rsk.core.bc.MiningMainchainViewImpl;
 import co.rsk.core.bc.TransactionPoolImpl;
+import co.rsk.crypto.Keccak256;
 import co.rsk.db.RepositoryLocator;
 import co.rsk.mine.MinerClient;
 import co.rsk.mine.MinerServer;
 import co.rsk.net.BlockProcessor;
+import co.rsk.net.TransactionGateway;
 import co.rsk.net.simples.SimpleBlockProcessor;
 import co.rsk.peg.BridgeSupportFactory;
 import co.rsk.rpc.ExecutionBlockRetriever;
+import co.rsk.rpc.Web3InformationRetriever;
 import co.rsk.rpc.Web3RskImpl;
 import co.rsk.rpc.modules.debug.DebugModule;
 import co.rsk.rpc.modules.debug.DebugModuleImpl;
-import co.rsk.rpc.modules.eth.*;
+import co.rsk.rpc.modules.eth.EthModule;
+import co.rsk.rpc.modules.eth.EthModuleTransactionBase;
+import co.rsk.rpc.modules.eth.EthModuleWalletEnabled;
 import co.rsk.rpc.modules.personal.PersonalModule;
 import co.rsk.rpc.modules.personal.PersonalModuleWalletDisabled;
 import co.rsk.rpc.modules.personal.PersonalModuleWalletEnabled;
+import co.rsk.rpc.modules.rsk.RskModule;
+import co.rsk.rpc.modules.rsk.RskModuleImpl;
 import co.rsk.rpc.modules.txpool.TxPoolModule;
 import co.rsk.rpc.modules.txpool.TxPoolModuleImpl;
 import co.rsk.test.World;
@@ -47,9 +54,10 @@ import co.rsk.test.builders.BlockBuilder;
 import co.rsk.test.builders.TransactionBuilder;
 import co.rsk.util.TestContract;
 import org.bouncycastle.util.encoders.Hex;
-import org.ethereum.config.SystemProperties;
+import org.ethereum.TestUtils;
 import org.ethereum.core.*;
 import org.ethereum.crypto.ECKey;
+import org.ethereum.crypto.HashUtil;
 import org.ethereum.crypto.Keccak256Helper;
 import org.ethereum.datasource.HashMapDB;
 import org.ethereum.db.BlockStore;
@@ -61,22 +69,25 @@ import org.ethereum.net.server.ChannelManager;
 import org.ethereum.net.server.PeerServer;
 import org.ethereum.rpc.Simples.*;
 import org.ethereum.rpc.dto.BlockResultDTO;
-import org.ethereum.rpc.dto.CompilationResultDTO;
 import org.ethereum.rpc.dto.TransactionReceiptDTO;
 import org.ethereum.rpc.dto.TransactionResultDTO;
-import org.ethereum.rpc.exception.JsonRpcInvalidParamException;
-import org.ethereum.solidity.compiler.SolidityCompiler;
+import org.ethereum.rpc.exception.RskJsonRpcRequestException;
 import org.ethereum.util.BuildInfo;
+import org.ethereum.util.ByteUtil;
 import org.ethereum.vm.program.ProgramResult;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.math.BigInteger;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.*;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.*;
 
 /**
@@ -94,7 +105,7 @@ public class Web3ImplTest {
 
         String clientVersion = web3.web3_clientVersion();
 
-        Assert.assertTrue("client version is not including rsk!", clientVersion.toLowerCase().contains("rsk"));
+        assertTrue("client version is not including rsk!", clientVersion.toLowerCase().contains("rsk"));
     }
 
     @Test
@@ -103,7 +114,7 @@ public class Web3ImplTest {
 
         String netVersion = web3.net_version();
 
-        Assert.assertTrue("RSK net version different than expected", netVersion.compareTo(Byte.toString(config.getNetworkConstants().getChainId())) == 0);
+        assertTrue("RSK net version different than expected", netVersion.compareTo(Byte.toString(config.getNetworkConstants().getChainId())) == 0);
     }
 
     @Test
@@ -113,7 +124,7 @@ public class Web3ImplTest {
 
         String netVersion = web3.eth_protocolVersion();
 
-        Assert.assertTrue("RSK net version different than one", netVersion.compareTo("1") == 0);
+        assertTrue("RSK net version different than one", netVersion.compareTo("1") == 0);
     }
 
     @Test
@@ -137,7 +148,7 @@ public class Web3ImplTest {
 
         // Function must apply the Keccak-256 algorithm
         // Result taken from https://emn178.github.io/online-tools/keccak_256.html
-        Assert.assertTrue("hash does not match", result.compareTo("0x80553b6b348ae45ab8e8bf75e77064818c0a772f13cf8d3a175d3815aec59b56") == 0);
+        assertTrue("hash does not match", result.compareTo("0x80553b6b348ae45ab8e8bf75e77064818c0a772f13cf8d3a175d3815aec59b56") == 0);
     }
 
     @Test
@@ -149,7 +160,7 @@ public class Web3ImplTest {
 
         Object result = web3.eth_syncing();
 
-        Assert.assertTrue("Node is not syncing, must return false", !(boolean)result);
+        assertTrue("Node is not syncing, must return false", !(boolean)result);
     }
 
     @Test
@@ -161,9 +172,9 @@ public class Web3ImplTest {
 
         Object result = web3.eth_syncing();
 
-        Assert.assertTrue("Node is syncing, must return sync manager", result instanceof Web3.SyncingResult);
-        Assert.assertTrue("Highest block is 5", ((Web3.SyncingResult)result).highestBlock.compareTo("0x5") == 0);
-        Assert.assertTrue("Simple blockchain starts from genesis block", ((Web3.SyncingResult)result).currentBlock.compareTo("0x0") == 0);
+        assertTrue("Node is syncing, must return sync manager", result instanceof Web3.SyncingResult);
+        assertTrue("Highest block is 5", ((Web3.SyncingResult)result).highestBlock.compareTo("0x5") == 0);
+        assertTrue("Simple blockchain starts from genesis block", ((Web3.SyncingResult)result).currentBlock.compareTo("0x0") == 0);
     }
 
     @Test
@@ -173,7 +184,7 @@ public class Web3ImplTest {
 
         Web3Impl web3 = createWeb3(world);
 
-        org.junit.Assert.assertEquals("0x" + Hex.toHexString(BigInteger.valueOf(10000).toByteArray()), web3.eth_getBalance(Hex.toHexString(acc1.getAddress().getBytes())));
+        org.junit.Assert.assertEquals("0x" + ByteUtil.toHexString(BigInteger.valueOf(10000).toByteArray()), web3.eth_getBalance(ByteUtil.toHexString(acc1.getAddress().getBytes())));
     }
 
     @Test
@@ -183,7 +194,7 @@ public class Web3ImplTest {
 
         Web3Impl web3 = createWeb3(world);
 
-        org.junit.Assert.assertEquals("0x" + Hex.toHexString(BigInteger.valueOf(10000).toByteArray()), web3.eth_getBalance(Hex.toHexString(acc1.getAddress().getBytes()), "latest"));
+        org.junit.Assert.assertEquals("0x" + ByteUtil.toHexString(BigInteger.valueOf(10000).toByteArray()), web3.eth_getBalance(ByteUtil.toHexString(acc1.getAddress().getBytes()), "latest"));
     }
 
     @Test
@@ -193,8 +204,8 @@ public class Web3ImplTest {
 
         Web3Impl web3 = createWeb3(world);
 
-        String accountAddress = Hex.toHexString(acc1.getAddress().getBytes());
-        String balanceString = "0x" + Hex.toHexString(BigInteger.valueOf(10000).toByteArray());
+        String accountAddress = ByteUtil.toHexString(acc1.getAddress().getBytes());
+        String balanceString = "0x" + ByteUtil.toHexString(BigInteger.valueOf(10000).toByteArray());
 
         org.junit.Assert.assertEquals(balanceString, web3.eth_getBalance(accountAddress, "0x0"));
     }
@@ -210,8 +221,8 @@ public class Web3ImplTest {
 
         Web3Impl web3 = createWeb3(world);
 
-        String accountAddress = Hex.toHexString(acc1.getAddress().getBytes());
-        String balanceString = "0x" + Hex.toHexString(BigInteger.valueOf(10000).toByteArray());
+        String accountAddress = ByteUtil.toHexString(acc1.getAddress().getBytes());
+        String balanceString = "0x" + ByteUtil.toHexString(BigInteger.valueOf(10000).toByteArray());
 
         org.junit.Assert.assertEquals(balanceString, web3.eth_getBalance(accountAddress, "0x1"));
     }
@@ -234,8 +245,8 @@ public class Web3ImplTest {
 
         Web3Impl web3 = createWeb3(world, transactionPool, null);
 
-        String accountAddress = Hex.toHexString(acc2.getAddress().getBytes());
-        String balanceString = "0x" + Hex.toHexString(BigInteger.valueOf(10000).toByteArray());
+        String accountAddress = ByteUtil.toHexString(acc2.getAddress().getBytes());
+        String balanceString = "0x" + ByteUtil.toHexString(BigInteger.valueOf(10000).toByteArray());
 
         org.junit.Assert.assertEquals("0x0", web3.eth_getBalance(accountAddress, "0x0"));
         org.junit.Assert.assertEquals(balanceString, web3.eth_getBalance(accountAddress, "0x1"));
@@ -246,7 +257,6 @@ public class Web3ImplTest {
     public void eth_mining()  {
         Ethereum ethMock = Web3Mocks.getMockEthereum();
         Blockchain blockchain = Web3Mocks.getMockBlockchain();
-        TransactionPool transactionPool = Web3Mocks.getMockTransactionPool();
         BlockStore blockStore = Web3Mocks.getMockBlockStore();
         RskSystemProperties mockProperties = Web3Mocks.getMockProperties();
         MinerClient minerClient = new SimpleMinerClient();
@@ -256,7 +266,6 @@ public class Web3ImplTest {
         Web3 web3 = new Web3Impl(
                 ethMock,
                 blockchain,
-                transactionPool,
                 blockStore,
                 null,
                 mockProperties,
@@ -268,34 +277,34 @@ public class Web3ImplTest {
                 txPoolModule,
                 null,
                 debugModule,
+                null, null,
                 Web3Mocks.getMockChannelManager(),
-                Web3Mocks.getMockRepositoryLocator(),
                 null,
                 null,
                 null,
                 null,
                 null,
                 null,
-                null
-        );
+                null,
+                mock(Web3InformationRetriever.class));
 
-        Assert.assertTrue("Node is not mining", !web3.eth_mining());
+        assertTrue("Node is not mining", !web3.eth_mining());
         try {
             minerClient.start();
 
-            Assert.assertTrue("Node is mining", web3.eth_mining());
+            assertTrue("Node is mining", web3.eth_mining());
         } finally {
             minerClient.stop();
         }
 
-        Assert.assertTrue("Node is not mining", !web3.eth_mining());
+        assertTrue("Node is not mining", !web3.eth_mining());
     }
 
     @Test
     public void getGasPrice()  {
         Web3Impl web3 = createWeb3();
         web3.eth = new SimpleEthereum();
-        String expectedValue = Hex.toHexString(new BigInteger("20000000000").toByteArray());
+        String expectedValue = ByteUtil.toHexString(new BigInteger("20000000000").toByteArray());
         expectedValue = "0x" + (expectedValue.startsWith("0") ? expectedValue.substring(1) : expectedValue);
         org.junit.Assert.assertEquals(expectedValue, web3.eth_gasPrice());
     }
@@ -313,6 +322,7 @@ public class Web3ImplTest {
         String hashString = tx.getHash().toHexString();
 
         Assert.assertNull(web3.eth_getTransactionReceipt(hashString));
+        Assert.assertNull(web3.rsk_getRawTransactionReceiptByHash(hashString));
     }
 
     @Test
@@ -335,18 +345,28 @@ public class Web3ImplTest {
 
         TransactionReceiptDTO tr = web3.eth_getTransactionReceipt(hashString);
 
-        org.junit.Assert.assertNotNull(tr);
-        org.junit.Assert.assertEquals("0x" + hashString, tr.transactionHash);
+        assertNotNull(tr);
+        org.junit.Assert.assertEquals("0x" + hashString, tr.getTransactionHash());
         String trxFrom = TypeConverter.toJsonHex(tx.getSender().getBytes());
-        org.junit.Assert.assertEquals(trxFrom, tr.from);
+        org.junit.Assert.assertEquals(trxFrom, tr.getFrom());
         String trxTo = TypeConverter.toJsonHex(tx.getReceiveAddress().getBytes());
-        org.junit.Assert.assertEquals(trxTo, tr.to);
+        org.junit.Assert.assertEquals(trxTo, tr.getTo());
 
         String blockHashString = "0x" + block1.getHash();
-        org.junit.Assert.assertEquals(blockHashString, tr.blockHash);
+        org.junit.Assert.assertEquals(blockHashString, tr.getBlockHash());
 
         String blockNumberAsHex = "0x" + Long.toHexString(block1.getNumber());
-        org.junit.Assert.assertEquals(blockNumberAsHex, tr.blockNumber);
+        org.junit.Assert.assertEquals(blockNumberAsHex, tr.getBlockNumber());
+
+        String rawTransactionReceipt = web3.rsk_getRawTransactionReceiptByHash(hashString);
+        String expectedRawTxReceipt = "0xf9010c01825208b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c082520801";
+        Assert.assertEquals(expectedRawTxReceipt, rawTransactionReceipt);
+
+        String[] transactionReceiptNodes = web3.rsk_getTransactionReceiptNodesByHash(blockHashString, hashString);
+        ArrayList<String> expectedRawTxReceiptNodes = new ArrayList<>();
+        expectedRawTxReceiptNodes.add("0x70078048ee76b19fc451dba9dbee8b3e73084f79ea540d3940b3b36b128e8024e9302500010f");
+        Assert.assertEquals(1, transactionReceiptNodes.length);
+        Assert.assertEquals(expectedRawTxReceiptNodes.get(0), transactionReceiptNodes[0]);
     }
 
     @Test
@@ -400,18 +420,18 @@ public class Web3ImplTest {
 
         TransactionResultDTO tr = web3.eth_getTransactionByHash(hashString);
 
-        Assert.assertNotNull(tr);
+        assertNotNull(tr);
         org.junit.Assert.assertEquals("0x" + hashString, tr.hash);
 
         String blockHashString = "0x" + block1.getHash();
         org.junit.Assert.assertEquals(blockHashString, tr.blockHash);
 
         org.junit.Assert.assertEquals("0x", tr.input);
-        org.junit.Assert.assertEquals("0x" + Hex.toHexString(tx.getReceiveAddress().getBytes()), tr.to);
+        org.junit.Assert.assertEquals("0x" + ByteUtil.toHexString(tx.getReceiveAddress().getBytes()), tr.to);
 
-        Assert.assertArrayEquals(new byte[] {tx.getSignature().v}, TypeConverter.stringHexToByteArray(tr.v));
-        Assert.assertThat(TypeConverter.stringHexToBigInteger(tr.s), is(tx.getSignature().s));
-        Assert.assertThat(TypeConverter.stringHexToBigInteger(tr.r), is(tx.getSignature().r));
+        Assert.assertArrayEquals(new byte[] {tx.getSignature().getV()}, TypeConverter.stringHexToByteArray(tr.v));
+        Assert.assertThat(TypeConverter.stringHexToBigInteger(tr.s), is(tx.getSignature().getS()));
+        Assert.assertThat(TypeConverter.stringHexToBigInteger(tr.r), is(tx.getSignature().getR()));
     }
 
     @Test
@@ -421,8 +441,8 @@ public class Web3ImplTest {
 
         BlockChainImpl blockChain = world.getBlockChain();
         BlockStore blockStore = world.getBlockStore();
-        TransactionExecutorFactory transactionExecutorFactory = buildTransactionExecutorFactory(blockStore );
-        TransactionPool transactionPool = new TransactionPoolImpl(config, world.getRepositoryLocator(), blockStore, blockFactory, null, transactionExecutorFactory, 10, 100);
+        TransactionExecutorFactory transactionExecutorFactory = buildTransactionExecutorFactory(blockStore, world.getBlockTxSignatureCache());
+        TransactionPool transactionPool = new TransactionPoolImpl(config, world.getRepositoryLocator(), blockStore, blockFactory, null, transactionExecutorFactory, world.getReceivedTxSignatureCache(), 10, 100);
         transactionPool.processBest(blockChain.getBestBlock());
         Web3Impl web3 = createWeb3(world, transactionPool, receiptStore);
 
@@ -435,14 +455,14 @@ public class Web3ImplTest {
 
         TransactionResultDTO tr = web3.eth_getTransactionByHash(hashString);
 
-        Assert.assertNotNull(tr);
+        assertNotNull(tr);
 
         org.junit.Assert.assertEquals("0x" + hashString, tr.hash);
         org.junit.Assert.assertEquals("0", tr.nonce);
         org.junit.Assert.assertEquals(null, tr.blockHash);
         org.junit.Assert.assertEquals(null, tr.transactionIndex);
         org.junit.Assert.assertEquals("0x", tr.input);
-        org.junit.Assert.assertEquals("0x" + Hex.toHexString(tx.getReceiveAddress().getBytes()), tr.to);
+        org.junit.Assert.assertEquals("0x" + ByteUtil.toHexString(tx.getReceiveAddress().getBytes()), tr.to);
     }
 
     @Test
@@ -496,7 +516,7 @@ public class Web3ImplTest {
 
         TransactionResultDTO tr = web3.eth_getTransactionByBlockHashAndIndex(blockHashString, "0x0");
 
-        Assert.assertNotNull(tr);
+        assertNotNull(tr);
         org.junit.Assert.assertEquals("0x" + hashString, tr.hash);
 
         org.junit.Assert.assertEquals("0x" + blockHashString, tr.blockHash);
@@ -541,7 +561,7 @@ public class Web3ImplTest {
 
         TransactionResultDTO tr = web3.eth_getTransactionByBlockNumberAndIndex("0x01", "0x0");
 
-        Assert.assertNotNull(tr);
+        assertNotNull(tr);
         org.junit.Assert.assertEquals("0x" + hashString, tr.hash);
 
         org.junit.Assert.assertEquals("0x" + blockHashString, tr.blockHash);
@@ -579,21 +599,21 @@ public class Web3ImplTest {
                                         world.getBlockStore()).trieStore(world.getTrieStore()).parent(genesis).transactions(txs).build();
         org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block1));
 
-        String accountAddress = Hex.toHexString(acc1.getAddress().getBytes());
+        String accountAddress = ByteUtil.toHexString(acc1.getAddress().getBytes());
 
         String count = web3.eth_getTransactionCount(accountAddress, "0x1");
 
-        Assert.assertNotNull(count);
+        assertNotNull(count);
         org.junit.Assert.assertEquals("0x1", count);
 
         count = web3.eth_getTransactionCount(accountAddress, "0x0");
 
-        Assert.assertNotNull(count);
+        assertNotNull(count);
         org.junit.Assert.assertEquals("0x0", count);
     }
 
     @Test
-    public void getBlockByNumber() throws Exception {
+    public void getBlockByNumber() {
         World world = new World();
 
         Web3Impl web3 = createWeb3(world);
@@ -613,21 +633,26 @@ public class Web3ImplTest {
 
         BlockResultDTO bresult = web3.eth_getBlockByNumber("0x1", false);
 
-        Assert.assertNotNull(bresult);
+        assertNotNull(bresult);
 
         String blockHash = "0x" + block1b.getHash();
         org.junit.Assert.assertEquals(blockHash, bresult.getHash());
 
+        String bnOrId = "0x2";
         bresult = web3.eth_getBlockByNumber("0x2", true);
 
-        Assert.assertNotNull(bresult);
+        assertNotNull(bresult);
 
         blockHash = "0x" + block2b.getHash();
         org.junit.Assert.assertEquals(blockHash, bresult.getHash());
+
+        String hexString = web3.rsk_getRawBlockHeaderByNumber(bnOrId).replace("0x","");
+        Keccak256  obtainedBlockHash = new Keccak256(HashUtil.keccak256(Hex.decode(hexString)));
+        Assert.assertEquals(blockHash, obtainedBlockHash.toJsonString());
     }
 
     @Test
-    public void getBlocksByNumber() throws Exception {
+    public void getBlocksByNumber() {
         World world = new World();
 
         Web3Impl web3 = createWeb3(world);
@@ -650,15 +675,15 @@ public class Web3ImplTest {
         String hashBlock1String = block1.getHashJsonString();
         String hashBlock1bString = block1b.getHashJsonString();
 
-        Assert.assertNotNull(bresult);
+        assertNotNull(bresult);
 
-        org.junit.Assert.assertEquals(2, bresult.length);
-        org.junit.Assert.assertEquals(hashBlock1String, bresult[0].hash);
-        org.junit.Assert.assertEquals(hashBlock1bString, bresult[1].hash);
+        assertEquals(2, bresult.length);
+        assertEquals(hashBlock1String, bresult[0].hash);
+        assertEquals(hashBlock1bString, bresult[1].hash);
     }
 
     @Test
-    public void getBlockByNumberRetrieveLatestBlock() throws Exception {
+    public void getBlockByNumberRetrieveLatestBlock() {
         World world = new World();
 
         Web3Impl web3 = createWeb3(world);
@@ -668,13 +693,13 @@ public class Web3ImplTest {
         Block block1 = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(),
                                         world.getBlockStore()).trieStore(world.getTrieStore()).parent(genesis).build();
         block1.setBitcoinMergedMiningHeader(new byte[] { 0x01 });
-        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block1));
+        assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block1));
 
         BlockResultDTO blockResult = web3.eth_getBlockByNumber("latest", false);
 
-        Assert.assertNotNull(blockResult);
+        assertNotNull(blockResult);
         String blockHash = TypeConverter.toJsonHex(block1.getHash().toString());
-        org.junit.Assert.assertEquals(blockHash, blockResult.getHash());
+        assertEquals(blockHash, blockResult.getHash());
     }
 
     @Test
@@ -689,12 +714,17 @@ public class Web3ImplTest {
                                         world.getBlockStore()).trieStore(world.getTrieStore()).parent(genesis).build();
         org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block1));
 
-        BlockResultDTO blockResult = web3.eth_getBlockByNumber("earliest", false);
+        String bnOrId = "earliest";
+        BlockResultDTO blockResult = web3.eth_getBlockByNumber(bnOrId, false);
 
-        Assert.assertNotNull(blockResult);
+        assertNotNull(blockResult);
 
         String blockHash = genesis.getHashJsonString();
         org.junit.Assert.assertEquals(blockHash, blockResult.getHash());
+
+        String hexString = web3.rsk_getRawBlockHeaderByNumber(bnOrId).replace("0x","");
+        Keccak256  obtainedBlockHash = new Keccak256(HashUtil.keccak256(Hex.decode(hexString)));
+        Assert.assertEquals(blockHash, obtainedBlockHash.toJsonString());
     }
 
     @Test
@@ -703,9 +733,23 @@ public class Web3ImplTest {
 
         Web3Impl web3 = createWeb3(world);
 
-        BlockResultDTO blockResult = web3.eth_getBlockByNumber("0x1234", false);
+        String bnOrId = "0x1234";
+        BlockResultDTO blockResult = web3.eth_getBlockByNumber(bnOrId, false);
 
         Assert.assertNull(blockResult);
+
+        String hexString = web3.rsk_getRawBlockHeaderByNumber(bnOrId);
+        Assert.assertNull(hexString);
+    }
+
+    @Test(expected=org.ethereum.rpc.exception.RskJsonRpcRequestException.class)
+    public void getBlockByNumberWhenNumberIsInvalidThrowsException() throws Exception {
+        World world = new World();
+
+        Web3Impl web3 = createWeb3(world);
+
+        String bnOrId = "991234";
+        web3.eth_getBlockByNumber(bnOrId, false);
     }
 
     @Test
@@ -734,23 +778,30 @@ public class Web3ImplTest {
 
         BlockResultDTO bresult = web3.eth_getBlockByHash(block1HashString, false);
 
-        Assert.assertNotNull(bresult);
+        assertNotNull(bresult);
         org.junit.Assert.assertEquals(block1HashString, bresult.getHash());
         org.junit.Assert.assertEquals("0x", bresult.getExtraData());
         org.junit.Assert.assertEquals(0, bresult.getTransactions().size());
         org.junit.Assert.assertEquals(0, bresult.getUncles().size());
         org.junit.Assert.assertEquals("0xa", bresult.getDifficulty());
         org.junit.Assert.assertEquals("0xb", bresult.getTotalDifficulty());
-
         bresult = web3.eth_getBlockByHash(block1bHashString, true);
 
-        Assert.assertNotNull(bresult);
+        assertNotNull(bresult);
         org.junit.Assert.assertEquals(block1bHashString, bresult.getHash());
+
+        String hexString = web3.rsk_getRawBlockHeaderByHash(block1bHashString).replace("0x","");
+        Keccak256  blockHash = new Keccak256(HashUtil.keccak256(Hex.decode(hexString)));
+        Assert.assertEquals(blockHash.toJsonString(), block1bHashString);
 
         bresult = web3.eth_getBlockByHash(block2bHashString, true);
 
-        Assert.assertNotNull(bresult);
+        assertNotNull(bresult);
         org.junit.Assert.assertEquals(block2bHashString, bresult.getHash());
+
+        hexString = web3.rsk_getRawBlockHeaderByHash(block2bHashString).replace("0x","");
+        blockHash = new Keccak256(HashUtil.keccak256(Hex.decode(hexString)));
+        Assert.assertEquals(blockHash.toJsonString(), block2bHashString);
     }
 
     @Test
@@ -775,7 +826,7 @@ public class Web3ImplTest {
 
         BlockResultDTO bresult = web3.eth_getBlockByHash(block1HashString, true);
 
-        Assert.assertNotNull(bresult);
+        assertNotNull(bresult);
         org.junit.Assert.assertEquals(block1HashString, bresult.getHash());
         org.junit.Assert.assertEquals(1, bresult.getTransactions().size());
         org.junit.Assert.assertEquals(block1HashString, ((TransactionResultDTO) bresult.getTransactions().get(0)).blockHash);
@@ -805,7 +856,7 @@ public class Web3ImplTest {
 
         BlockResultDTO bresult = web3.eth_getBlockByHash(block1HashString, false);
 
-        Assert.assertNotNull(bresult);
+        assertNotNull(bresult);
         org.junit.Assert.assertEquals(block1HashString, bresult.getHash());
         org.junit.Assert.assertEquals(1, bresult.getTransactions().size());
         org.junit.Assert.assertEquals(tx.getHash().toJsonString(), bresult.getTransactions().get(0));
@@ -818,9 +869,385 @@ public class Web3ImplTest {
 
         Web3Impl web3 = createWeb3(world);
 
-        BlockResultDTO blockResult = web3.eth_getBlockByHash("0x1234000000000000000000000000000000000000000000000000000000000000", false);
+        String blockHash = "0x1234000000000000000000000000000000000000000000000000000000000000";
+        BlockResultDTO blockResult = web3.eth_getBlockByHash(blockHash, false);
 
         Assert.assertNull(blockResult);
+
+        String hexString = web3.rsk_getRawBlockHeaderByHash(blockHash);
+        Assert.assertNull(hexString);
+    }
+
+    @Test
+    public void getBlockByHashBlockWithUncles() {
+        World world = new World();
+        Web3Impl web3 = createWeb3(world);
+
+        Block genesis = world.getBlockChain().getBestBlock();
+        Block block1 = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore())
+                .difficulty(20)
+                .parent(genesis)
+                .build();
+        block1.setBitcoinMergedMiningHeader(new byte[]{0x01});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block1));
+
+        Block block1b = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore())
+                .difficulty(10)
+                .parent(genesis)
+                .build();
+        block1b.setBitcoinMergedMiningHeader(new byte[]{0x02});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(block1b));
+
+        Block block1c = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore())
+                .difficulty(10)
+                .parent(genesis)
+                .build();
+        block1c.setBitcoinMergedMiningHeader(new byte[]{0x03});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(block1c));
+
+        ArrayList<BlockHeader> uncles = new ArrayList<>();
+        uncles.add(block1b.getHeader());
+        uncles.add(block1c.getHeader());
+
+        Block block2 = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore())
+                .difficulty(10)
+                .parent(block1)
+                .uncles(uncles)
+                .build();
+        block2.setBitcoinMergedMiningHeader(new byte[]{0x04});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block2));
+
+        String block1HashString = "0x" + block1.getHash();
+        String block1bHashString = "0x" + block1b.getHash();
+        String block1cHashString = "0x" + block1c.getHash();
+        String block2HashString = "0x" + block2.getHash();
+
+        BlockResultDTO result = web3.eth_getBlockByHash(block2HashString, false);
+
+        Assert.assertEquals(block2HashString, result.getHash());
+        Assert.assertEquals(block1HashString, result.getParentHash());
+        Assert.assertTrue(result.getUncles().contains(block1bHashString));
+        Assert.assertTrue(result.getUncles().contains(block1cHashString));
+        Assert.assertEquals(TypeConverter.toQuantityJsonHex(30), result.getCumulativeDifficulty());
+    }
+
+    @Test
+    public void getBlockByNumberBlockWithUncles() {
+        World world = new World();
+        Web3Impl web3 = createWeb3(world);
+
+        Block genesis = world.getBlockChain().getBestBlock();
+        Block block1 = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore())
+                .difficulty(20)
+                .parent(genesis)
+                .build();
+        block1.setBitcoinMergedMiningHeader(new byte[]{0x01});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block1));
+
+        Block block1b = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore())
+                .difficulty(10)
+                .parent(genesis)
+                .build();
+        block1b.setBitcoinMergedMiningHeader(new byte[]{0x02});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(block1b));
+
+        Block block1c = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore())
+                .difficulty(10)
+                .parent(genesis)
+                .build();
+        block1c.setBitcoinMergedMiningHeader(new byte[]{0x03});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(block1c));
+
+        ArrayList<BlockHeader> uncles = new ArrayList<>();
+        uncles.add(block1b.getHeader());
+        uncles.add(block1c.getHeader());
+
+        Block block2 = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore())
+                .difficulty(10)
+                .parent(block1)
+                .uncles(uncles)
+                .build();
+        block2.setBitcoinMergedMiningHeader(new byte[]{0x04});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block2));
+
+        String block1HashString = "0x" + block1.getHash();
+        String block1bHashString = "0x" + block1b.getHash();
+        String block1cHashString = "0x" + block1c.getHash();
+        String block2HashString = "0x" + block2.getHash();
+
+        BlockResultDTO result = web3.eth_getBlockByNumber("0x02", false);
+
+        Assert.assertEquals(block2HashString, result.getHash());
+        Assert.assertEquals(block1HashString, result.getParentHash());
+        Assert.assertTrue(result.getUncles().contains(block1bHashString));
+        Assert.assertTrue(result.getUncles().contains(block1cHashString));
+        Assert.assertEquals(TypeConverter.toQuantityJsonHex(30), result.getCumulativeDifficulty());
+    }
+
+    @Test
+    public void getUncleByBlockHashAndIndexBlockWithUncles() {
+        /* Structure:
+         *    Genesis
+         * |     |     |
+         * A     B     C
+         * | \  / ____/
+         * D  E
+         * | /
+         * F
+         *
+         * A-D-F mainchain
+         * B and C uncles of E
+         * E uncle of F
+         * */
+        World world = new World();
+        Web3Impl web3 = createWeb3(world);
+
+        Block genesis = world.getBlockChain().getBestBlock();
+        Block blockA = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockA.setBitcoinMergedMiningHeader(new byte[]{0x01});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockA));
+
+        Block blockB = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockB.setBitcoinMergedMiningHeader(new byte[]{0x02});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockB));
+
+        Block blockC = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockC.setBitcoinMergedMiningHeader(new byte[]{0x03});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockC));
+
+        // block D must have a higher difficulty than block E and its uncles so it doesn't fall behind due to a reorg
+        Block blockD = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(100).parent(blockA).build();
+        blockD.setBitcoinMergedMiningHeader(new byte[]{0x04});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockD));
+
+        List<BlockHeader> blockEUncles = Arrays.asList(blockB.getHeader(), blockC.getHeader());
+        Block blockE = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(blockA).uncles(blockEUncles).build();
+        blockE.setBitcoinMergedMiningHeader(new byte[]{0x05});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockE));
+
+        List<BlockHeader> blockFUncles = Arrays.asList(blockE.getHeader());
+        Block blockF = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(blockD).uncles(blockFUncles).build();
+        blockF.setBitcoinMergedMiningHeader(new byte[]{0x06});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockF));
+
+        String blockFhash = "0x" + blockF.getHash();
+        String blockEhash = "0x" + blockE.getHash();
+        String blockBhash = "0x" + blockB.getHash();
+        String blockChash = "0x" + blockC.getHash();
+
+        BlockResultDTO result = web3.eth_getUncleByBlockHashAndIndex(blockFhash, "0x00");
+
+        Assert.assertEquals(blockEhash, result.getHash());
+        Assert.assertEquals(2, result.getUncles().size());
+        Assert.assertTrue(result.getUncles().contains(blockBhash));
+        Assert.assertTrue(result.getUncles().contains(blockChash));
+        Assert.assertEquals(TypeConverter.toQuantityJsonHex(30), result.getCumulativeDifficulty());
+    }
+
+    @Test
+    public void getUncleByBlockHashAndIndexBlockWithUnclesCorrespondingToAnUnknownBlock() {
+        World world = new World();
+        Account acc1 = new AccountBuilder(world).name("acc1").balance(Coin.valueOf(10000)).build();
+
+        Web3Impl web3 = createWeb3(world);
+
+        Block genesis = world.getBlockChain().getBestBlock();
+        Block blockA = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockA.setBitcoinMergedMiningHeader(new byte[]{0x01});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockA));
+
+        Block blockB = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockB.setBitcoinMergedMiningHeader(new byte[]{0x02});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockB));
+
+        Block blockC = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockC.setBitcoinMergedMiningHeader(new byte[]{0x03});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockC));
+
+        // block D must have a higher difficulty than block E and its uncles so it doesn't fall behind due to a reorg
+        Block blockD = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(100).parent(blockA).build();
+        blockD.setBitcoinMergedMiningHeader(new byte[]{0x04});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockD));
+
+        Transaction tx = new TransactionBuilder()
+                .sender(acc1)
+                .gasLimit(BigInteger.valueOf(100000))
+                .gasPrice(BigInteger.ONE)
+                .build();
+        List<Transaction> txs = new ArrayList<>();
+        txs.add(tx);
+
+        List<BlockHeader> blockEUncles = Arrays.asList(blockB.getHeader(), blockC.getHeader());
+        Block blockE = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(blockA).uncles(blockEUncles)
+                .transactions(txs).buildWithoutExecution();
+
+        blockE.setBitcoinMergedMiningHeader(new byte[]{0x05});
+
+        Assert.assertEquals(1, blockE.getTransactionsList().size());
+        Assert.assertFalse(Arrays.equals(blockC.getTxTrieRoot(), blockE.getTxTrieRoot()));
+
+        List<BlockHeader> blockFUncles = Arrays.asList(blockE.getHeader());
+        Block blockF = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(blockD).uncles(blockFUncles).build();
+        blockF.setBitcoinMergedMiningHeader(new byte[]{0x06});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockF));
+
+        String blockFhash = "0x" + blockF.getHash();
+        String blockEhash = "0x" + blockE.getHash();
+
+        BlockResultDTO result = web3.eth_getUncleByBlockHashAndIndex(blockFhash, "0x00");
+
+        Assert.assertEquals(blockEhash, result.getHash());
+        Assert.assertEquals(0, result.getUncles().size());
+        Assert.assertEquals(0, result.getTransactions().size());
+        Assert.assertEquals("0x" + ByteUtil.toHexString(blockE.getTxTrieRoot()), result.getTransactionsRoot());
+    }
+
+    @Test
+    public void getUncleByBlockNumberAndIndexBlockWithUncles() {
+        /* Structure:
+         *    Genesis
+         * |     |     |
+         * A     B     C
+         * | \  / ____/
+         * D  E
+         * | /
+         * F
+         *
+         * A-D-F mainchain
+         * B and C uncles of E
+         * E uncle of F
+         * */
+        World world = new World();
+        Web3Impl web3 = createWeb3(world);
+
+        Block genesis = world.getBlockChain().getBestBlock();
+        Block blockA = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockA.setBitcoinMergedMiningHeader(new byte[]{0x01});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockA));
+
+        Block blockB = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockB.setBitcoinMergedMiningHeader(new byte[]{0x02});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockB));
+
+        Block blockC = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockC.setBitcoinMergedMiningHeader(new byte[]{0x03});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockC));
+
+        // block D must have a higher difficulty than block E and its uncles so it doesn't fall behind due to a reorg
+        Block blockD = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(100).parent(blockA).build();
+        blockD.setBitcoinMergedMiningHeader(new byte[]{0x04});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockD));
+
+        List<BlockHeader> blockEUncles = Arrays.asList(blockB.getHeader(), blockC.getHeader());
+        Block blockE = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(blockA).uncles(blockEUncles).build();
+        blockE.setBitcoinMergedMiningHeader(new byte[]{0x05});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockE));
+
+        List<BlockHeader> blockFUncles = Arrays.asList(blockE.getHeader());
+        Block blockF = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(blockD).uncles(blockFUncles).build();
+        blockF.setBitcoinMergedMiningHeader(new byte[]{0x06});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockF));
+
+        String blockEhash = "0x" + blockE.getHash();
+        String blockBhash = "0x" + blockB.getHash();
+        String blockChash = "0x" + blockC.getHash();
+
+        BlockResultDTO result = web3.eth_getUncleByBlockNumberAndIndex("0x03", "0x00");
+
+        Assert.assertEquals(blockEhash, result.getHash());
+        Assert.assertEquals(2, result.getUncles().size());
+        Assert.assertTrue(result.getUncles().contains(blockBhash));
+        Assert.assertTrue(result.getUncles().contains(blockChash));
+        Assert.assertEquals(TypeConverter.toQuantityJsonHex(30), result.getCumulativeDifficulty());
+    }
+
+    @Test
+    public void getUncleByBlockNumberAndIndexBlockWithUnclesCorrespondingToAnUnknownBlock() {
+        World world = new World();
+        Account acc1 = new AccountBuilder(world).name("acc1").balance(Coin.valueOf(10000)).build();
+
+        Web3Impl web3 = createWeb3(world);
+
+        Block genesis = world.getBlockChain().getBestBlock();
+        Block blockA = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockA.setBitcoinMergedMiningHeader(new byte[]{0x01});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockA));
+
+        Block blockB = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockB.setBitcoinMergedMiningHeader(new byte[]{0x02});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockB));
+
+        Block blockC = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(genesis).build();
+        blockC.setBitcoinMergedMiningHeader(new byte[]{0x03});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_NOT_BEST, world.getBlockChain().tryToConnect(blockC));
+
+        // block D must have a higher difficulty than block E and its uncles so it doesn't fall behind due to a reorg
+        Block blockD = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(100).parent(blockA).build();
+        blockD.setBitcoinMergedMiningHeader(new byte[]{0x04});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockD));
+
+        Transaction tx = new TransactionBuilder()
+                .sender(acc1)
+                .gasLimit(BigInteger.valueOf(100000))
+                .gasPrice(BigInteger.ONE)
+                .build();
+        List<Transaction> txs = new ArrayList<>();
+        txs.add(tx);
+
+        List<BlockHeader> blockEUncles = Arrays.asList(blockB.getHeader(), blockC.getHeader());
+        Block blockE = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(blockA).uncles(blockEUncles)
+                .transactions(txs).buildWithoutExecution();
+
+        blockE.setBitcoinMergedMiningHeader(new byte[]{0x05});
+
+        Assert.assertEquals(1, blockE.getTransactionsList().size());
+        Assert.assertFalse(Arrays.equals(blockC.getTxTrieRoot(), blockE.getTxTrieRoot()));
+
+        List<BlockHeader> blockFUncles = Arrays.asList(blockE.getHeader());
+        Block blockF = new BlockBuilder(world.getBlockChain(), world.getBridgeSupportFactory(), world.getBlockStore())
+                .trieStore(world.getTrieStore()).difficulty(10).parent(blockD).uncles(blockFUncles).build();
+        blockF.setBitcoinMergedMiningHeader(new byte[]{0x06});
+        org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(blockF));
+
+        String blockEhash = "0x" + blockE.getHash();
+
+        BlockResultDTO result = web3.eth_getUncleByBlockNumberAndIndex("0x" + blockF.getNumber(), "0x00");
+
+        Assert.assertEquals(blockEhash, result.getHash());
+        Assert.assertEquals(0, result.getUncles().size());
+        Assert.assertEquals(0, result.getTransactions().size());
+        Assert.assertEquals("0x" + ByteUtil.toHexString(blockE.getTxTrieRoot()), result.getTransactionsRoot());
     }
 
     @Test
@@ -840,12 +1267,12 @@ public class Web3ImplTest {
                                         world.getBlockStore()).trieStore(world.getTrieStore()).parent(genesis).build();
         org.junit.Assert.assertEquals(ImportResult.IMPORTED_BEST, world.getBlockChain().tryToConnect(block1));
 
-        String accountAddress = Hex.toHexString(acc1.getAddress().getBytes());
+        String accountAddress = ByteUtil.toHexString(acc1.getAddress().getBytes());
 
         String scode = web3.eth_getCode(accountAddress, "0x1");
 
-        Assert.assertNotNull(scode);
-        org.junit.Assert.assertEquals("0x" + Hex.toHexString(code), scode);
+        assertNotNull(scode);
+        org.junit.Assert.assertEquals("0x" + ByteUtil.toHexString(code), scode);
     }
 
     @Test
@@ -935,7 +1362,7 @@ public class Web3ImplTest {
         byte[] code = new byte[] { 0x01, 0x02, 0x03 };
         world.getRepository().saveCode(acc1.getAddress(), code);
 
-        String accountAddress = Hex.toHexString(acc1.getAddress().getBytes());
+        String accountAddress = ByteUtil.toHexString(acc1.getAddress().getBytes());
 
         String resultCode = web3.eth_getCode(accountAddress, "0x100");
 
@@ -951,10 +1378,10 @@ public class Web3ImplTest {
 
         Web3Impl web3 = createWeb3(eth, peerServer);
 
-        Assert.assertTrue("Node is not listening", !web3.net_listening());
+        assertTrue("Node is not listening", !web3.net_listening());
 
         peerServer.isListening = true;
-        Assert.assertTrue("Node is listening", web3.net_listening());
+        assertTrue("Node is listening", web3.net_listening());
     }
 
     @Test
@@ -972,7 +1399,6 @@ public class Web3ImplTest {
         Web3 web3 = new Web3Impl(
                 ethMock,
                 blockchain,
-                transactionPool,
                 blockStore,
                 null,
                 mockProperties,
@@ -984,16 +1410,16 @@ public class Web3ImplTest {
                 null,
                 null,
                 null,
+                null, null,
                 Web3Mocks.getMockChannelManager(),
-                Web3Mocks.getMockRepositoryLocator(),
                 null,
                 null,
                 null,
                 null,
                 null,
                 null,
-                null
-        );
+                null,
+                mock(Web3InformationRetriever.class));
 
         Assert.assertEquals("0x" + originalCoinbase, web3.eth_coinbase());
         verify(minerServerMock, times(1)).getCoinbaseAddress();
@@ -1012,8 +1438,8 @@ public class Web3ImplTest {
 
         Assert.assertEquals("Not all accounts are being retrieved", originalAccounts + 2, accounts.size());
 
-        Assert.assertTrue(accounts.contains(addr1));
-        Assert.assertTrue(accounts.contains(addr2));
+        assertTrue(accounts.contains(addr1));
+        assertTrue(accounts.contains(addr2));
     }
 
     @Test
@@ -1025,7 +1451,7 @@ public class Web3ImplTest {
 
         byte[] hash = Keccak256Helper.keccak256("this is the data to hash".getBytes());
 
-        String signature = web3.eth_sign(addr1, "0x" + Hex.toHexString(hash));
+        String signature = web3.eth_sign(addr1, "0x" + ByteUtil.toHexString(hash));
 
         Assert.assertThat(
                 signature,
@@ -1050,8 +1476,8 @@ public class Web3ImplTest {
             return;
         }
 
-        org.junit.Assert.assertNotNull(account);
-        org.junit.Assert.assertEquals(addr, "0x" + Hex.toHexString(account.getAddress().getBytes()));
+        assertNotNull(account);
+        org.junit.Assert.assertEquals(addr, "0x" + ByteUtil.toHexString(account.getAddress().getBytes()));
     }
 
     @Test
@@ -1065,10 +1491,10 @@ public class Web3ImplTest {
 
         Set<String> addresses = Arrays.stream(web3.personal_listAccounts()).collect(Collectors.toSet());
 
-        org.junit.Assert.assertNotNull(addresses);
+        assertNotNull(addresses);
         org.junit.Assert.assertEquals(originalAccounts + 2, addresses.size());
-        org.junit.Assert.assertTrue(addresses.contains(addr1));
-        org.junit.Assert.assertTrue(addresses.contains(addr2));
+        assertTrue(addresses.contains(addr1));
+        assertTrue(addresses.contains(addr2));
     }
 
     @Test
@@ -1078,19 +1504,25 @@ public class Web3ImplTest {
 
         ECKey eckey = new ECKey();
 
-        String address = web3.personal_importRawKey(Hex.toHexString(eckey.getPrivKeyBytes()), "passphrase1");
+        byte[] privKeyBytes = eckey.getPrivKeyBytes();
 
-        org.junit.Assert.assertNotNull(address);
+        ECKey privKey = ECKey.fromPrivate(privKeyBytes);
 
-        Account account0 = wallet.getAccount(new RskAddress(address));
+        RskAddress addr = new RskAddress(privKey.getAddress());
 
-        org.junit.Assert.assertNull(account0);
+        Account account = wallet.getAccount(addr);
 
-        Account account = wallet.getAccount(new RskAddress(address), "passphrase1");
+        org.junit.Assert.assertNull(account);
 
-        org.junit.Assert.assertNotNull(account);
-        org.junit.Assert.assertEquals(address, "0x" + Hex.toHexString(account.getAddress().getBytes()));
-        org.junit.Assert.assertArrayEquals(eckey.getPrivKeyBytes(), account.getEcKey().getPrivKeyBytes());
+        String address = web3.personal_importRawKey(ByteUtil.toHexString(privKeyBytes), "passphrase1");
+
+        assertNotNull(address);
+
+        account = wallet.getAccount(addr);
+
+        assertNotNull(account);
+        org.junit.Assert.assertEquals(address, "0x" + ByteUtil.toHexString(account.getAddress().getBytes()));
+        org.junit.Assert.assertArrayEquals(privKeyBytes, account.getEcKey().getPrivKeyBytes());
     }
 
     @Test
@@ -1099,8 +1531,8 @@ public class Web3ImplTest {
 
         ECKey eckey = new ECKey();
 
-        String address = web3.personal_importRawKey(Hex.toHexString(eckey.getPrivKeyBytes()), "passphrase1");
-        org.junit.Assert.assertTrue(web3.personal_unlockAccount(address, "passphrase1", ""));
+        String address = web3.personal_importRawKey(ByteUtil.toHexString(eckey.getPrivKeyBytes()), "passphrase1");
+        assertTrue(web3.personal_unlockAccount(address, "passphrase1", ""));
 
         String rawKey = web3.personal_dumpRawKey(address).substring(2);
 
@@ -1149,7 +1581,7 @@ public class Web3ImplTest {
 
         String expectedHash = tx.getHash().toJsonString();
 
-        Assert.assertTrue("Method is not creating the expected transaction", expectedHash.compareTo(txHash) == 0);
+        assertEquals("Method is not creating the expected transaction", 0, expectedHash.compareTo(txHash));
     }
 
     @Test
@@ -1159,31 +1591,27 @@ public class Web3ImplTest {
 
         String addr = web3.personal_newAccount("passphrase1");
 
-        Account account0 = wallet.getAccount(new RskAddress(addr));
+        web3.personal_lockAccount(addr);
 
-        org.junit.Assert.assertNull(account0);
-
-        org.junit.Assert.assertTrue(web3.personal_unlockAccount(addr, "passphrase1", ""));
+        assertTrue(web3.personal_unlockAccount(addr, "passphrase1", ""));
 
         Account account = wallet.getAccount(new RskAddress(addr));
 
-        org.junit.Assert.assertNotNull(account);
+        assertNotNull(account);
     }
 
-    @Test(expected = JsonRpcInvalidParamException.class)
+    @Test
     public void unlockAccountInvalidDuration()
     {
         Web3Impl web3 = createWeb3();
 
         String addr = web3.personal_newAccount("passphrase1");
 
-        Account account0 = wallet.getAccount(new RskAddress(addr));
+        web3.personal_lockAccount(addr);
 
-        org.junit.Assert.assertNull(account0);
-
-        web3.personal_unlockAccount(addr, "passphrase1", "K");
-
-        org.junit.Assert.fail("This should fail");
+        RskJsonRpcRequestException e = TestUtils.assertThrows(RskJsonRpcRequestException.class,
+                () -> web3.personal_unlockAccount(addr, "passphrase1", "K"));
+        assertEquals(-32602, (int) e.getCode());
     }
 
     @Test
@@ -1193,17 +1621,11 @@ public class Web3ImplTest {
 
         String addr = web3.personal_newAccount("passphrase1");
 
-        Account account0 = wallet.getAccount(new RskAddress(addr));
-
-        org.junit.Assert.assertNull(account0);
-
-        org.junit.Assert.assertTrue(web3.personal_unlockAccount(addr, "passphrase1", ""));
-
         Account account = wallet.getAccount(new RskAddress(addr));
 
-        org.junit.Assert.assertNotNull(account);
+        assertNotNull(account);
 
-        org.junit.Assert.assertTrue(web3.personal_lockAccount(addr));
+        assertTrue(web3.personal_lockAccount(addr));
 
         Account account1 = wallet.getAccount(new RskAddress(addr));
 
@@ -1225,8 +1647,8 @@ public class Web3ImplTest {
         World world = new World(receiptStore);
         BlockChainImpl blockChain = world.getBlockChain();
         BlockStore blockStore = world.getBlockStore();
-        TransactionExecutorFactory transactionExecutorFactory = buildTransactionExecutorFactory(blockStore);
-        TransactionPool transactionPool = new TransactionPoolImpl(config, world.getRepositoryLocator(), blockStore, blockFactory, null, transactionExecutorFactory, 10, 100);
+        TransactionExecutorFactory transactionExecutorFactory = buildTransactionExecutorFactory(blockStore, world.getBlockTxSignatureCache());
+        TransactionPool transactionPool = new TransactionPoolImpl(config, world.getRepositoryLocator(), blockStore, blockFactory, null, transactionExecutorFactory, world.getReceivedTxSignatureCache(), 10, 100);
         Web3Impl web3 = createWeb3(world, transactionPool, receiptStore);
 
         // **** Initializes data ******************
@@ -1259,7 +1681,20 @@ public class Web3ImplTest {
 
         String expectedHash = tx.getHash().toJsonString();
 
-        Assert.assertTrue("Method is not creating the expected transaction", expectedHash.compareTo(txHash) == 0);
+        assertTrue("Method is not creating the expected transaction", expectedHash.compareTo(txHash) == 0);
+    }
+
+    @Test
+    public void createNewAccountWithoutDuplicates(){
+        Web3Impl web3 = createWeb3();
+        int originalAccountSize = wallet.getAccountAddresses().size();
+        String testAccountAddress = web3.personal_newAccountWithSeed("testAccount");
+
+        assertEquals("The number of accounts was not increased", originalAccountSize + 1, wallet.getAccountAddresses().size());
+
+        web3.personal_newAccountWithSeed("testAccount");
+
+        assertEquals("The number of accounts was increased", originalAccountSize + 1, wallet.getAccountAddresses().size());
     }
 
     private Web3Impl createWeb3(World world) {
@@ -1289,7 +1724,7 @@ public class Web3ImplTest {
         EthModule ethModule = new EthModule(
                 config.getNetworkConstants().getBridgeConstants(), config.getNetworkConstants().getChainId(), blockchain, transactionPool,
                 null, new ExecutionBlockRetriever(mainchainView, blockchain, null, null),
-                null, new EthModuleSolidityDisabled(), new EthModuleWalletEnabled(wallet), null,
+                null, new EthModuleWalletEnabled(wallet), null,
                 new BridgeSupportFactory(
                         null, config.getNetworkConstants().getBridgeConstants(), config.getActivationConfig())
         );
@@ -1300,7 +1735,6 @@ public class Web3ImplTest {
         return new Web3RskImpl(
                 eth,
                 blockchain,
-                transactionPool,
                 config,
                 minerClient,
                 Web3Mocks.getMockMinerServer(),
@@ -1310,8 +1744,8 @@ public class Web3ImplTest {
                 txPoolModule,
                 null,
                 debugModule,
+                null, null,
                 channelManager,
-                Web3Mocks.getMockRepositoryLocator(),
                 null,
                 null,
                 null,
@@ -1321,15 +1755,18 @@ public class Web3ImplTest {
                 null,
                 null,
                 null,
-                null
-        );
+                null,
+                new Web3InformationRetriever(
+                        transactionPool,
+                        blockchain,
+                        mock(RepositoryLocator.class)));
     }
 
     private Web3Impl createWeb3(Ethereum eth, World world, ReceiptStore receiptStore) {
         BlockStore blockStore = world.getBlockStore();
-        TransactionExecutorFactory transactionExecutorFactory = buildTransactionExecutorFactory(blockStore);
+        TransactionExecutorFactory transactionExecutorFactory = buildTransactionExecutorFactory(blockStore, world.getBlockTxSignatureCache());
         TransactionPool transactionPool = new TransactionPoolImpl(config, world.getRepositoryLocator(), blockStore,
-                                                                  blockFactory, null, transactionExecutorFactory, 10, 100);
+                                                                  blockFactory, null, transactionExecutorFactory, world.getReceivedTxSignatureCache(), 10, 100);
         return createWeb3(eth, world, transactionPool, receiptStore);
     }
 
@@ -1344,9 +1781,9 @@ public class Web3ImplTest {
     private Web3Impl createWeb3(World world, BlockProcessor blockProcessor, ReceiptStore receiptStore) {
         BlockChainImpl blockChain = world.getBlockChain();
         BlockStore blockStore = world.getBlockStore();
-        TransactionExecutorFactory transactionExecutorFactory = buildTransactionExecutorFactory(blockStore);
+        TransactionExecutorFactory transactionExecutorFactory = buildTransactionExecutorFactory(blockStore, world.getBlockTxSignatureCache());
         TransactionPool transactionPool = new TransactionPoolImpl(config, world.getRepositoryLocator(),
-                                                                  blockStore, blockFactory, null, transactionExecutorFactory, 10, 100);
+                                                                  blockStore, blockFactory, null, transactionExecutorFactory, world.getReceivedTxSignatureCache(), 10, 100);
         RepositoryLocator repositoryLocator = new RepositoryLocator(world.getTrieStore(), world.getStateRootHandler());
         return createWeb3(
                 Web3Mocks.getMockEthereum(), blockChain, repositoryLocator, transactionPool,
@@ -1371,21 +1808,22 @@ public class Web3ImplTest {
         ProgramResult res = new ProgramResult();
         res.setHReturn(TypeConverter.stringHexToByteArray("0x0000000000000000000000000000000000000000000000000000000064617665"));
         when(executor.executeTransaction(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(res);
+        Web3InformationRetriever retriever = new Web3InformationRetriever(transactionPool, blockchain, repositoryLocator);
+        TransactionGateway transactionGateway = new TransactionGateway(new SimpleChannelManager(), transactionPool);
         EthModule ethModule = new EthModule(
                 config.getNetworkConstants().getBridgeConstants(), config.getNetworkConstants().getChainId(), blockchain, transactionPool, executor,
-                new ExecutionBlockRetriever(miningMainchainViewMock, blockchain, null, null), repositoryLocator,
-                new EthModuleSolidityDisabled(), new EthModuleWalletEnabled(wallet),
-                new EthModuleTransactionBase(config.getNetworkConstants(), wallet, transactionPool),
+                new ExecutionBlockRetriever(miningMainchainViewMock, blockchain, null, null), repositoryLocator, new EthModuleWalletEnabled(wallet),
+                new EthModuleTransactionBase(config.getNetworkConstants(), wallet, transactionPool, transactionGateway),
                 new BridgeSupportFactory(
                         null, config.getNetworkConstants().getBridgeConstants(), config.getActivationConfig()));
         TxPoolModule txPoolModule = new TxPoolModuleImpl(transactionPool);
         DebugModule debugModule = new DebugModuleImpl(null, null, Web3Mocks.getMockMessageHandler(), null);
+        RskModule rskModule = new RskModuleImpl(blockchain, blockStore, receiptStore, retriever);
         MinerClient minerClient = new SimpleMinerClient();
         ChannelManager channelManager = new SimpleChannelManager();
         return new Web3RskImpl(
                 eth,
                 blockchain,
-                transactionPool,
                 config,
                 minerClient,
                 Web3Mocks.getMockMinerServer(),
@@ -1395,8 +1833,8 @@ public class Web3ImplTest {
                 txPoolModule,
                 null,
                 debugModule,
+                null, rskModule,
                 channelManager,
-                repositoryLocator,
                 null,
                 null,
                 blockStore,
@@ -1406,134 +1844,19 @@ public class Web3ImplTest {
                 null,
                 configCapabilities,
                 new BuildInfo("test", "test"),
-                null
-        );
-    }
-
-    @Test
-    @Ignore
-    public void eth_compileSolidity() throws Exception {
-        RskSystemProperties systemProperties = mock(RskSystemProperties.class);
-        String solc = System.getProperty("solc");
-        if (solc == null || solc.isEmpty())
-            solc = "/usr/bin/solc";
-
-        when(systemProperties.customSolcPath()).thenReturn(solc);
-        Ethereum eth = mock(Ethereum.class);
-        EthModule ethModule = new EthModule(
-                config.getNetworkConstants().getBridgeConstants(), config.getNetworkConstants().getChainId(), null, null,
-                null, new ExecutionBlockRetriever(null, null, null, null), null,
-                new EthModuleSolidityEnabled(new SolidityCompiler(systemProperties)), null, null,
-                new BridgeSupportFactory(
-                        null, config.getNetworkConstants().getBridgeConstants(), config.getActivationConfig())
-        );
-        PersonalModule personalModule = new PersonalModuleWalletDisabled();
-        TxPoolModule txPoolModule = new TxPoolModuleImpl(Web3Mocks.getMockTransactionPool());
-        DebugModule debugModule = new DebugModuleImpl(null, null, Web3Mocks.getMockMessageHandler(), null);
-        Web3Impl web3 = new Web3RskImpl(
-                eth,
                 null,
-                null,
-                systemProperties,
-                null,
-                null,
-                personalModule,
-                ethModule,
-                null,
-                txPoolModule,
-                null,
-                debugModule,
-                Web3Mocks.getMockChannelManager(),
-                Web3Mocks.getMockRepositoryLocator(),
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null
-        );
-        String contract = "pragma solidity ^0.4.1; contract rsk { function multiply(uint a) returns(uint d) {   return a * 7;   } }";
-
-        Map<String, CompilationResultDTO> result = web3.eth_compileSolidity(contract);
-
-        org.junit.Assert.assertNotNull(result);
-
-        CompilationResultDTO dto = result.get("rsk");
-
-        if (dto == null)
-            dto = result.get("<stdin>:rsk");
-
-        org.junit.Assert.assertEquals(contract , dto.info.getSource());
-    }
-
-    @Test
-    public void eth_compileSolidityWithoutSolidity() throws Exception {
-        SystemProperties systemProperties = mock(SystemProperties.class);
-        String solc = System.getProperty("solc");
-        if (solc == null || solc.isEmpty())
-            solc = "/usr/bin/solc";
-
-        when(systemProperties.customSolcPath()).thenReturn(solc);
-
-        Wallet wallet = WalletFactory.createWallet();
-        Ethereum eth = Web3Mocks.getMockEthereum();
-        Blockchain blockchain = Web3Mocks.getMockBlockchain();
-        TransactionPool transactionPool = Web3Mocks.getMockTransactionPool();
-        EthModule ethModule = new EthModule(
-                config.getNetworkConstants().getBridgeConstants(), config.getNetworkConstants().getChainId(), blockchain, transactionPool,
-                null, new ExecutionBlockRetriever(null, null, null, null),
-                null, new EthModuleSolidityDisabled(), new EthModuleWalletEnabled(wallet), null,
-                new BridgeSupportFactory(
-                        null, config.getNetworkConstants().getBridgeConstants(), config.getActivationConfig()));
-        TxPoolModule txPoolModule = new TxPoolModuleImpl(Web3Mocks.getMockTransactionPool());
-        DebugModule debugModule = new DebugModuleImpl(null, null, Web3Mocks.getMockMessageHandler(), null);
-        Web3Impl web3 = new Web3RskImpl(
-                eth,
-                blockchain,
-                transactionPool,
-                config,
-                null,
-                null,
-                new PersonalModuleWalletDisabled(),
-                ethModule,
-                null,
-                txPoolModule,
-                null,
-                debugModule,
-                Web3Mocks.getMockChannelManager(),
-                Web3Mocks.getMockRepositoryLocator(),
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null
-        );
-
-        String contract = "pragma solidity ^0.4.1; contract rsk { function multiply(uint a) returns(uint d) {   return a * 7;   } }";
-
-        Map<String, CompilationResultDTO> result = web3.eth_compileSolidity(contract);
-
-        org.junit.Assert.assertNotNull(result);
-        org.junit.Assert.assertEquals(0, result.size());
+                retriever);
     }
 
     private TransactionExecutorFactory buildTransactionExecutorFactory(
-            BlockStore blockStore) {
+            BlockStore blockStore, BlockTxSignatureCache blockTxSignatureCache) {
         return new TransactionExecutorFactory(
                 config,
                 blockStore,
                 null,
                 blockFactory,
                 null,
-                null);
+                null,
+                blockTxSignatureCache);
     }
 }

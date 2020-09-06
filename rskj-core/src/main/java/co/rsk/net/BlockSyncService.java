@@ -44,12 +44,11 @@ public class BlockSyncService {
     public static final int CHUNK_PART_LIMIT = 8;
     public static final int PROCESSED_BLOCKS_TO_CHECK_STORE = 200;
     public static final int RELEASED_RANGE = 1000;
-    private Map<Keccak256, Integer> unknownBlockHashes;
     private long processedBlocksCounter;
     private long lastKnownBlockNumber = 0;
 
     private static final Logger logger = LoggerFactory.getLogger("blocksyncservice");
-    private final BlockStore store;
+    private final NetBlockStore store;
     private final Blockchain blockchain;
     private final SyncConfiguration syncConfiguration;
     private final BlockNodeInformation nodeInformation; // keep tabs on which nodes know which blocks.
@@ -59,7 +58,7 @@ public class BlockSyncService {
     // and we should use the same objects everywhere to ensure consistency
     public BlockSyncService(
             @Nonnull final RskSystemProperties config,
-            @Nonnull final BlockStore store,
+            @Nonnull final NetBlockStore store,
             @Nonnull final Blockchain blockchain,
             @Nonnull final BlockNodeInformation nodeInformation,
             @Nonnull final SyncConfiguration syncConfiguration) {
@@ -67,11 +66,10 @@ public class BlockSyncService {
         this.blockchain = blockchain;
         this.syncConfiguration = syncConfiguration;
         this.nodeInformation = nodeInformation;
-        this.unknownBlockHashes = new HashMap<>();
         this.config = config;
     }
 
-    public BlockProcessResult processBlock(@Nonnull Block block, MessageChannel sender, boolean ignoreMissingHashes) {
+    public BlockProcessResult processBlock(@Nonnull Block block, Peer sender, boolean ignoreMissingHashes) {
         Instant start = Instant.now();
         long bestBlockNumber = this.getBestBlockNumber();
         long blockNumber = block.getNumber();
@@ -80,12 +78,11 @@ public class BlockSyncService {
 
         tryReleaseStore(bestBlockNumber);
         store.removeHeader(block.getHeader());
-        unknownBlockHashes.remove(blockHash);
 
         if (blockNumber > bestBlockNumber + syncMaxDistance) {
-            logger.trace("Block too advanced {} {} from {} ", blockNumber, block.getShortHash(),
+            logger.trace("Block too advanced {} {} from {} ", blockNumber, block.getPrintableHash(),
                     sender != null ? sender.getPeerNodeID().toString() : "N/A");
-            return new BlockProcessResult(false, null, block.getShortHash(),
+            return new BlockProcessResult(false, null, block.getPrintableHash(),
                     Duration.between(start, Instant.now()));
         }
 
@@ -95,8 +92,8 @@ public class BlockSyncService {
 
         // already in a blockchain
         if (BlockUtils.blockInSomeBlockChain(block, blockchain)) {
-            logger.trace("Block already in a chain {} {}", blockNumber, block.getShortHash());
-            return new BlockProcessResult(false, null, block.getShortHash(),
+            logger.trace("Block already in a chain {} {}", blockNumber, block.getPrintableHash());
+            return new BlockProcessResult(false, null, block.getPrintableHash(),
                     Duration.between(start, Instant.now()));
         }
         trySaveStore(block);
@@ -105,10 +102,10 @@ public class BlockSyncService {
         // We can't add the block if there are missing ancestors or uncles. Request the missing blocks to the sender.
         if (!unknownHashes.isEmpty()) {
             if (!ignoreMissingHashes){
-                logger.trace("Missing hashes for block in process {} {}", blockNumber, block.getShortHash());
+                logger.trace("Missing hashes for block in process {} {}", blockNumber, block.getPrintableHash());
                 requestMissingHashes(sender, unknownHashes);
             }
-            return new BlockProcessResult(false, null, block.getShortHash(),
+            return new BlockProcessResult(false, null, block.getPrintableHash(),
                     Duration.between(start, Instant.now()));
         }
 
@@ -117,7 +114,7 @@ public class BlockSyncService {
         Map<Keccak256, ImportResult> connectResult = connectBlocksAndDescendants(sender,
                 BlockUtils.sortBlocksByNumber(this.getParentsNotInBlockchain(block)), ignoreMissingHashes);
 
-        return new BlockProcessResult(true, connectResult, block.getShortHash(),
+        return new BlockProcessResult(true, connectResult, block.getPrintableHash(),
                 Duration.between(start, Instant.now()));
     }
 
@@ -134,8 +131,7 @@ public class BlockSyncService {
     }
 
     public boolean hasBetterBlockToSync() {
-        int blocksDistance = syncConfiguration.getChunkSize() / CHUNK_PART_LIMIT;
-        return getLastKnownBlockNumber() >= getBestBlockNumber() + blocksDistance;
+        return getLastKnownBlockNumber() >= getBestBlockNumber() + syncConfiguration.getLongSyncLimit();
     }
 
     public boolean canBeIgnoredForUnclesRewards(long blockNumber) {
@@ -161,7 +157,7 @@ public class BlockSyncService {
         }
     }
 
-    private Map<Keccak256, ImportResult> connectBlocksAndDescendants(MessageChannel sender, List<Block> blocks, boolean ignoreMissingHashes) {
+    private Map<Keccak256, ImportResult> connectBlocksAndDescendants(Peer sender, List<Block> blocks, boolean ignoreMissingHashes) {
         Map<Keccak256, ImportResult> connectionsResult = new HashMap<>();
         List<Block> remainingBlocks = blocks;
         while (!remainingBlocks.isEmpty()) {
@@ -172,17 +168,17 @@ public class BlockSyncService {
         return connectionsResult;
     }
 
-    private Set<Block> getConnectedBlocks(List<Block> remainingBlocks, MessageChannel sender, Map<Keccak256, ImportResult> connectionsResult, boolean ignoreMissingHashes) {
+    private Set<Block> getConnectedBlocks(List<Block> remainingBlocks, Peer sender, Map<Keccak256, ImportResult> connectionsResult, boolean ignoreMissingHashes) {
         Set<Block> connected = new HashSet<>();
 
         for (Block block : remainingBlocks) {
-            logger.trace("Trying to add block {} {}", block.getNumber(), block.getShortHash());
+            logger.trace("Trying to add block {} {}", block.getNumber(), block.getPrintableHash());
 
             Set<Keccak256> missingHashes = BlockUtils.unknownDirectAncestorsHashes(block, blockchain, store);
 
             if (!missingHashes.isEmpty()) {
                 if (!ignoreMissingHashes){
-                    logger.trace("Missing hashes for block in process {} {}", block.getNumber(), block.getShortHash());
+                    logger.trace("Missing hashes for block in process {} {}", block.getNumber(), block.getPrintableHash());
                     requestMissingHashes(sender, missingHashes);
                 }
                 continue;
@@ -198,7 +194,7 @@ public class BlockSyncService {
         return connected;
     }
 
-    private void requestMissingHashes(MessageChannel sender, Set<Keccak256> hashes) {
+    private void requestMissingHashes(Peer sender, Set<Keccak256> hashes) {
         logger.trace("Missing blocks to process {}", hashes.size());
 
         for (Keccak256 hash : hashes) {
@@ -206,14 +202,12 @@ public class BlockSyncService {
         }
     }
 
-    private void requestMissingHash(MessageChannel sender, Keccak256 hash) {
+    private void requestMissingHash(Peer sender, Keccak256 hash) {
         if (sender == null) {
             return;
         }
-
-        unknownBlockHashes.put(hash, 1);
-
-        logger.trace("Missing block {}", hash.toString().substring(0, 10));
+        
+        logger.trace("Missing block {}", hash.toHexString());
 
         sender.sendMessage(new GetBlockMessage(hash.getBytes()));
     }

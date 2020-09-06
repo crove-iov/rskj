@@ -22,7 +22,6 @@ package org.ethereum.core;
 import co.rsk.config.TestSystemProperties;
 import co.rsk.core.RskAddress;
 import co.rsk.core.TransactionExecutorFactory;
-import co.rsk.core.bc.BlockChainFlusher;
 import co.rsk.core.bc.BlockChainImpl;
 import co.rsk.core.bc.BlockExecutor;
 import co.rsk.core.bc.TransactionPoolImpl;
@@ -60,6 +59,8 @@ public class ImportLightTest {
         KeyValueDataSource ds = new HashMapDB();
         ds.init();
         ReceiptStore receiptStore = new ReceiptStoreImpl(ds);
+        ReceivedTxSignatureCache receivedTxSignatureCache = new ReceivedTxSignatureCache();
+        BlockTxSignatureCache blockTxSignatureCache = new BlockTxSignatureCache(receivedTxSignatureCache);
 
         TransactionExecutorFactory transactionExecutorFactory = new TransactionExecutorFactory(
                 config,
@@ -67,15 +68,14 @@ public class ImportLightTest {
                 receiptStore,
                 blockFactory,
                 new ProgramInvokeFactoryImpl(),
-
-                null);
+                null,
+                blockTxSignatureCache);
         StateRootHandler stateRootHandler = new StateRootHandler(config.getActivationConfig(), new TrieConverter(), new HashMapDB(), new HashMap<>());
         RepositoryLocator repositoryLocator = new RepositoryLocator(trieStore, stateRootHandler);
 
-        TransactionPoolImpl transactionPool = new TransactionPoolImpl(config, repositoryLocator, null, blockFactory, listener, transactionExecutorFactory, 10, 100);
+        TransactionPoolImpl transactionPool = new TransactionPoolImpl(config, repositoryLocator, null, blockFactory, listener, transactionExecutorFactory, receivedTxSignatureCache, 10, 100);
 
         BlockChainImpl blockchain = new BlockChainImpl(
-                new BlockChainFlusher(false, 1, trieStore, blockStore),
                 blockStore,
                 receiptStore,
                 transactionPool,

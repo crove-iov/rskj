@@ -29,13 +29,13 @@ import co.rsk.test.builders.BlockBuilder;
 import co.rsk.trie.TrieStore;
 import co.rsk.validators.BlockValidator;
 import org.bouncycastle.util.Arrays;
-import org.bouncycastle.util.encoders.Hex;
 import org.ethereum.core.*;
 import org.ethereum.core.genesis.GenesisLoader;
 import org.ethereum.crypto.ECKey;
 import org.ethereum.crypto.Keccak256Helper;
 import org.ethereum.db.BlockStore;
 import org.ethereum.listener.CompositeEthereumListener;
+import org.ethereum.util.ByteUtil;
 import org.ethereum.util.FastByteComparisons;
 import org.ethereum.util.RskTestFactory;
 import org.junit.Assert;
@@ -156,7 +156,7 @@ public class BlockChainImplTest {
         Block genesis = blockChain.getBestBlock();
         Block block1 = new BlockGenerator().createChildBlock(genesis);
 
-        alterBytes(block1.getHeader().getStateRoot());
+        block1.getHeader().setStateRoot(cloneAlterBytes(block1.getHeader().getStateRoot()));
 
         Assert.assertEquals(ImportResult.INVALID_BLOCK, blockChain.tryToConnect(block1));
     }
@@ -166,7 +166,7 @@ public class BlockChainImplTest {
         Block genesis = blockChain.getBestBlock();
         Block block1 = new BlockGenerator().createChildBlock(genesis);
 
-        alterBytes(block1.getHeader().getReceiptsRoot());
+        block1.getHeader().setReceiptsRoot(cloneAlterBytes(block1.getHeader().getReceiptsRoot()));
 
         Assert.assertEquals(ImportResult.INVALID_BLOCK, blockChain.tryToConnect(block1));
     }
@@ -176,7 +176,7 @@ public class BlockChainImplTest {
         Block genesis = blockChain.getBestBlock();
         Block block1 = new BlockGenerator().createChildBlock(genesis);
 
-        alterBytes(block1.getHeader().getLogsBloom());
+        block1.getHeader().setLogsBloom(cloneAlterBytes(block1.getHeader().getLogsBloom()));
 
         Assert.assertEquals(ImportResult.INVALID_BLOCK, blockChain.tryToConnect(block1));
     }
@@ -649,7 +649,7 @@ public class BlockChainImplTest {
         Block bestBlock = blockChain.getBestBlock();
         RepositorySnapshot repository = objects.getRepositoryLocator().snapshotAt(bestBlock.getHeader());
 
-        String toAddress = Hex.toHexString(catKey.getAddress());
+        String toAddress = ByteUtil.toHexString(catKey.getAddress());
         BigInteger nonce = repository.getNonce(new RskAddress(cowKey.getAddress()));
         Transaction tx = new Transaction(toAddress, BigInteger.TEN, nonce, BigInteger.ONE, BigInteger.valueOf(21000), config.getNetworkConstants().getChainId());
         tx.sign(cowKey.getPrivKeyBytes());
@@ -662,17 +662,13 @@ public class BlockChainImplTest {
         return block;
     }
 
-    private static void alterBytes(byte[] bytes) {
-        bytes[0] = (byte)((bytes[0] + 1) % 256);
-    }
-
     private static byte[] cloneAlterBytes(byte[] bytes) {
         byte[] cloned = Arrays.clone(bytes);
 
         if (cloned == null)
             return new byte[] { 0x01 };
 
-        alterBytes(cloned);
+        cloned[0] = (byte)((cloned[0] + 1) % 256);
         return cloned;
     }
 

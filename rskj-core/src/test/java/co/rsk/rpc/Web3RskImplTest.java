@@ -20,7 +20,6 @@ package co.rsk.rpc;
 
 import co.rsk.config.TestSystemProperties;
 import co.rsk.core.NetworkStateExporter;
-import co.rsk.core.Rsk;
 import co.rsk.core.Wallet;
 import co.rsk.core.WalletFactory;
 import co.rsk.core.bc.MiningMainchainView;
@@ -30,7 +29,6 @@ import co.rsk.peg.PegTestUtils;
 import co.rsk.rpc.modules.debug.DebugModule;
 import co.rsk.rpc.modules.debug.DebugModuleImpl;
 import co.rsk.rpc.modules.eth.EthModule;
-import co.rsk.rpc.modules.eth.EthModuleSolidityDisabled;
 import co.rsk.rpc.modules.eth.EthModuleWalletEnabled;
 import co.rsk.rpc.modules.personal.PersonalModule;
 import co.rsk.rpc.modules.personal.PersonalModuleWalletEnabled;
@@ -41,10 +39,10 @@ import org.ethereum.core.Blockchain;
 import org.ethereum.core.Transaction;
 import org.ethereum.crypto.HashUtil;
 import org.ethereum.db.BlockStore;
+import org.ethereum.facade.Ethereum;
 import org.ethereum.rpc.LogFilterElement;
 import org.ethereum.rpc.Web3;
 import org.ethereum.rpc.Web3Mocks;
-import org.ethereum.rpc.dto.BlockResultDTO;
 import org.ethereum.vm.DataWord;
 import org.ethereum.vm.LogInfo;
 import org.junit.Assert;
@@ -53,24 +51,25 @@ import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.OptionalLong;
+
+import static org.mockito.Mockito.mock;
 
 public class Web3RskImplTest {
 
     @Test
-    public void web3_ext_dumpState() throws Exception {
-        Rsk rsk = Mockito.mock(Rsk.class);
-        Blockchain blockchain = Mockito.mock(Blockchain.class);
-        MiningMainchainView mainchainView = Mockito.mock(MiningMainchainView.class);
+    public void web3_ext_dumpState() {
+        Ethereum rsk = mock(Ethereum.class);
+        Blockchain blockchain = mock(Blockchain.class);
+        MiningMainchainView mainchainView = mock(MiningMainchainView.class);
 
-        NetworkStateExporter networkStateExporter = Mockito.mock(NetworkStateExporter.class);
+        NetworkStateExporter networkStateExporter = mock(NetworkStateExporter.class);
         Mockito.when(networkStateExporter.exportStatus(Mockito.anyString())).thenReturn(true);
 
-        Block block = Mockito.mock(Block.class);
+        Block block = mock(Block.class);
         Mockito.when(block.getHash()).thenReturn(PegTestUtils.createHash3());
         Mockito.when(block.getNumber()).thenReturn(1L);
 
-        BlockStore blockStore = Mockito.mock(BlockStore.class);
+        BlockStore blockStore = mock(BlockStore.class);
         Mockito.when(blockStore.getBestBlock()).thenReturn(block);
         Mockito.when(networkStateExporter.exportStatus(Mockito.anyString())).thenReturn(true);
 
@@ -82,7 +81,7 @@ public class Web3RskImplTest {
         EthModule em = new EthModule(
                 config.getNetworkConstants().getBridgeConstants(), config.getNetworkConstants().getChainId(), blockchain, null,
                 null, new ExecutionBlockRetriever(mainchainView, blockchain, null, null),
-                null, new EthModuleSolidityDisabled(), new EthModuleWalletEnabled(wallet), null,
+                null, new EthModuleWalletEnabled(wallet), null,
                 new BridgeSupportFactory(
                         null, config.getNetworkConstants().getBridgeConstants(), config.getActivationConfig())
         );
@@ -91,7 +90,6 @@ public class Web3RskImplTest {
         Web3RskImpl web3 = new Web3RskImpl(
                 rsk,
                 blockchain,
-                Web3Mocks.getMockTransactionPool(),
                 config,
                 Web3Mocks.getMockMinerClient(),
                 Web3Mocks.getMockMinerServer(),
@@ -101,8 +99,8 @@ public class Web3RskImplTest {
                 tpm,
                 null,
                 dm,
+                null, null,
                 Web3Mocks.getMockChannelManager(),
-                Web3Mocks.getMockRepositoryLocator(),
                 null,
                 networkStateExporter,
                 blockStore,
@@ -112,25 +110,25 @@ public class Web3RskImplTest {
                 null,
                 null,
                 null,
-                null
-        );
+                null,
+                null);
         web3.ext_dumpState();
     }
 
     @Test
-    public void web3_LogFilterElement_toString() {
-        LogInfo logInfo = Mockito.mock(LogInfo.class);
+    public void web3_LogFilterElementNullAddress_toString() {
+        LogInfo logInfo = mock(LogInfo.class);
         byte[] valueToTest = HashUtil.keccak256(new byte[]{1});
         Mockito.when(logInfo.getData()).thenReturn(valueToTest);
         List<DataWord> topics = new ArrayList<>();
         topics.add(DataWord.valueFromHex("c1"));
         topics.add(DataWord.valueFromHex("c2"));
         Mockito.when(logInfo.getTopics()).thenReturn(topics);
-        Block block = Mockito.mock(Block.class);
+        Block block = mock(Block.class);
         Mockito.when(block.getHash()).thenReturn(new Keccak256(valueToTest));
         Mockito.when(block.getNumber()).thenReturn(1L);
         int txIndex = 1;
-        Transaction tx = Mockito.mock(Transaction.class);
+        Transaction tx = mock(Transaction.class);
         byte[] bytes = new byte[32];
         bytes[0] = 2;
         Mockito.when(tx.getHash()).thenReturn(new Keccak256(bytes));
@@ -138,7 +136,31 @@ public class Web3RskImplTest {
 
         LogFilterElement logFilterElement = new LogFilterElement(logInfo, block, txIndex, tx, logIdx);
 
-        Assert.assertEquals(logFilterElement.toString(), "LogFilterElement{logIndex='0x5', blockNumber='0x1', blockHash='0x5fe7f977e71dba2ea1a68e21057beebb9be2ac30c6410aa38d4f3fbe41dcffd2', transactionHash='0x0200000000000000000000000000000000000000000000000000000000000000', transactionIndex='0x1', address='0x00', data='0x5fe7f977e71dba2ea1a68e21057beebb9be2ac30c6410aa38d4f3fbe41dcffd2', topics=[0x00000000000000000000000000000000000000000000000000000000000000c1, 0x00000000000000000000000000000000000000000000000000000000000000c2]}");
+        Assert.assertEquals("LogFilterElement{logIndex='0x5', blockNumber='0x1', blockHash='0x5fe7f977e71dba2ea1a68e21057beebb9be2ac30c6410aa38d4f3fbe41dcffd2', transactionHash='0x0200000000000000000000000000000000000000000000000000000000000000', transactionIndex='0x1', address='0x', data='0x5fe7f977e71dba2ea1a68e21057beebb9be2ac30c6410aa38d4f3fbe41dcffd2', topics=[0x00000000000000000000000000000000000000000000000000000000000000c1, 0x00000000000000000000000000000000000000000000000000000000000000c2]}", logFilterElement.toString());
+    }
+
+    @Test
+    public void web3_LogFilterElementNullData_toString() {
+        LogInfo logInfo = mock(LogInfo.class);
+        byte[] valueToTest = HashUtil.keccak256(new byte[]{1});
+        Mockito.when(logInfo.getData()).thenReturn(null);
+        List<DataWord> topics = new ArrayList<>();
+        topics.add(DataWord.valueFromHex("c1"));
+        topics.add(DataWord.valueFromHex("c2"));
+        Mockito.when(logInfo.getTopics()).thenReturn(topics);
+        Block block = mock(Block.class);
+        Mockito.when(block.getHash()).thenReturn(new Keccak256(valueToTest));
+        Mockito.when(block.getNumber()).thenReturn(1L);
+        int txIndex = 1;
+        Transaction tx = mock(Transaction.class);
+        byte[] bytes = new byte[32];
+        bytes[0] = 2;
+        Mockito.when(tx.getHash()).thenReturn(new Keccak256(bytes));
+        int logIdx = 5;
+
+        LogFilterElement logFilterElement = new LogFilterElement(logInfo, block, txIndex, tx, logIdx);
+
+        Assert.assertEquals("LogFilterElement{logIndex='0x5', blockNumber='0x1', blockHash='0x5fe7f977e71dba2ea1a68e21057beebb9be2ac30c6410aa38d4f3fbe41dcffd2', transactionHash='0x0200000000000000000000000000000000000000000000000000000000000000', transactionIndex='0x1', address='0x', data='0x', topics=[0x00000000000000000000000000000000000000000000000000000000000000c1, 0x00000000000000000000000000000000000000000000000000000000000000c2]}", logFilterElement.toString());
     }
 
     @Test

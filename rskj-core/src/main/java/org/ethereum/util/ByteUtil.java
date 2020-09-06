@@ -19,14 +19,16 @@
 
 package org.ethereum.util;
 
-import org.ethereum.db.ByteArrayWrapper;
 import org.bouncycastle.util.encoders.Hex;
+import org.ethereum.db.ByteArrayWrapper;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 
 public class ByteUtil {
@@ -116,6 +118,29 @@ public class ByteUtil {
     }
 
     /**
+     * Parses 32-bytes word from given input.
+     * Uses {@link #parseBytes(byte[], int, int)} method,
+     * thus, result will be right-padded with zero bytes if there is not enough bytes in {@code input}
+     *
+     * @param idx an index of the word starting from {@code 0}
+     */
+    public static byte[] parseWord(byte[] input, int idx) {
+        return parseBytes(input, 32 * idx, 32);
+    }
+
+    /**
+     * Parses 32-bytes word from given input.
+     * Uses {@link #parseBytes(byte[], int, int)} method,
+     * thus, result will be right-padded with zero bytes if there is not enough bytes in {@code input}
+     *
+     * @param idx an index of the word starting from {@code 0}
+     * @param offset an offset in {@code input} array to start parsing from
+     */
+    public static byte[] parseWord(byte[] input, int offset, int idx) {
+        return parseBytes(input, offset + 32 * idx, 32);
+    }
+
+    /**
      * Returns the amount of nibbles that match each other from 0 ...
      * amount will never be larger than smallest input
      *
@@ -202,11 +227,9 @@ public class ByteUtil {
         return result;
     }
 
-
     /**
-     * Convert a byte-array into a hex String.<br>
-     * Works similar to {@link Hex#toHexString}
-     * but allows for <code>null</code>
+     * Converts a byte-array into a hex String.<br>
+     * Works similar to {@link Hex#toHexString}, but allows for {@code null}.
      *
      * @param data - byte-array to convert to a hex-string
      * @return hex representation of the data.<br>
@@ -214,8 +237,41 @@ public class ByteUtil {
      *
      * @see Hex#toHexString
      */
-    public static String toHexString(byte[] data) {
-        return data == null ? "" : Hex.toHexString(data);
+    @Nonnull
+    public static String toHexStringOrEmpty(@Nullable byte[] data) {
+        return data == null ? "" : toHexString(data);
+    }
+
+    /**
+     * Converts a byte-array into a hex String.<br>
+     * Works similar to {@link Hex#toHexString}. {@code data} cannot be {@code null}.
+     *
+     * @param data - byte-array to convert to a hex-string
+     * @return hex representation of the data.<br>
+     * @throws NullPointerException if {@code data} is {@code null}
+     *
+     * @see Hex#toHexString
+     */
+    @Nonnull
+    public static String toHexString(@Nonnull byte[] data) {
+        return Hex.toHexString(Objects.requireNonNull(data));
+    }
+
+    /**
+     * Converts a byte-array into a hex String.<br>
+     * Works similar to {@link Hex#toHexString}. {@code data} cannot be {@code null}.
+     *
+     * @param data - byte-array to convert to a hex-string
+     * @param off - initial offset of the subarray
+     * @param length - length of the subarray
+     * @return hex representation of the data.<br>
+     * @throws NullPointerException if {@code data} is {@code null}
+     *
+     * @see Hex#toHexString
+     */
+    @Nonnull
+    public static String toHexString(@Nonnull byte[] data, int off, int length) {
+        return Hex.toHexString(Objects.requireNonNull(data), off, length);
     }
 
     /**
@@ -249,18 +305,28 @@ public class ByteUtil {
     }
 
     /**
-     * Cast hex encoded value from byte[] to int
-     *
-     * Limited to Integer.MAX_VALUE: 2^32-1 (4 bytes)
+     * Cast from byte[] to long
+     * Limited to Long.MAX_VALUE: 2^63-1 (8 bytes)
+     * Will throw IlegalArgumentException if you  pass
+     * a byte array with more than 8 bytes.
      *
      * @param b array contains the values
      * @return unsigned positive long value.
      */
     public static long byteArrayToLong(byte[] b) {
         if (b == null || b.length == 0) {
-            return 0;
+             return 0;
         }
-        return new BigInteger(1, b).longValue();
+        // avoids overflows in the result
+        if (b.length > 8) {
+            throw new IllegalArgumentException("byte array can't have more than 8 bytes if it is to be cast to long");
+        }
+        long result = 0;
+        for (int i = 0; i < b.length; i++) {
+            result <<= 8;
+            result |= (b[i] & 0xFF);
+        }
+        return result;
     }
 
 

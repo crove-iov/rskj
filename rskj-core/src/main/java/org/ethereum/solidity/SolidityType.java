@@ -24,7 +24,6 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import org.ethereum.util.ByteUtil;
 import org.ethereum.util.Utils;
 import org.ethereum.vm.DataWord;
-import org.bouncycastle.util.encoders.Hex;
 
 import java.lang.reflect.Array;
 import java.math.BigInteger;
@@ -35,6 +34,7 @@ import java.util.List;
 
 public abstract class SolidityType {
     protected String name;
+    private final static int INT_32_SIZE = 32;
 
     public SolidityType(String name) {
         this.name = name;
@@ -329,13 +329,19 @@ public abstract class SolidityType {
                 BigInteger bigInt = new BigInteger(value.toString());
                 return IntType.encodeInt(bigInt);
             } else if (value instanceof String) {
-                byte[] ret = new byte[32];
+                byte[] ret = new byte[INT_32_SIZE];
                 byte[] bytes = ((String) value).getBytes(StandardCharsets.UTF_8);
                 System.arraycopy(bytes, 0, ret, 0, bytes.length);
                 return ret;
+            } else if (value instanceof byte[]) {
+                byte[] bytes = (byte[]) value;
+                byte[] ret = new byte[INT_32_SIZE];
+                System.arraycopy(bytes, 0, ret, INT_32_SIZE - bytes.length, bytes.length);
+                return ret;
+            }else if (value == null) {
+                throw new RuntimeException("Can't encode null to bytes32");
             }
-
-            return new byte[0];
+            throw new RuntimeException("Can't encode java type " + value.getClass() + " to bytes32");
         }
 
         @Override
@@ -358,7 +364,7 @@ public abstract class SolidityType {
             byte[] addr = super.encode(value);
             for (int i = 0; i < 12; i++) {
                 if (addr[i] != 0) {
-                    throw new RuntimeException("Invalid address (should be 20 bytes length): " + Hex.toHexString(addr));
+                    throw new RuntimeException("Invalid address (should be 20 bytes length): " + ByteUtil.toHexString(addr));
                 }
             }
             return addr;

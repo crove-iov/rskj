@@ -23,12 +23,12 @@ import co.rsk.blockchain.utils.BlockGenerator;
 import co.rsk.core.bc.BlockHashesHelper;
 import co.rsk.peg.PegTestUtils;
 import co.rsk.remasc.RemascTransaction;
-import org.bouncycastle.util.encoders.Hex;
 import org.ethereum.TestUtils;
 import org.ethereum.config.blockchain.upgrades.ActivationConfigsForTest;
 import org.ethereum.core.*;
 import org.ethereum.crypto.ECKey;
 import org.ethereum.crypto.HashUtil;
+import org.ethereum.util.ByteUtil;
 import org.ethereum.util.RLP;
 import org.ethereum.vm.PrecompiledContracts;
 import org.junit.Assert;
@@ -71,14 +71,28 @@ public class BlockTest {
         Transaction remascTx = new RemascTransaction(1);
         txs.add(remascTx);
 
+        BlockHeader newHeader = blockFactory.getBlockHeaderBuilder()
+                .setParentHashFromKeccak256(PegTestUtils.createHash3())
+                .setEmptyUnclesHash()
+                .setCoinbase(TestUtils.randomAddress())
+                .setEmptyStateRoot()
+                .setTxTrieRoot( BlockHashesHelper.getTxTrieRoot(txs, true))
+                .setEmptyLogsBloom()
+                .setEmptyReceiptTrieRoot()
+                .setDifficultyFromBytes(BigInteger.ONE.toByteArray())
+                .setNumber(1)
+                .setGasLimit(BigInteger.valueOf(4000000).toByteArray())
+                .setGasUsed( 3000000L)
+                .setTimestamp(100)
+                .setEmptyExtraData()
+                .setEmptyMergedMiningForkDetectionData()
+                .setMinimumGasPrice(new Coin(BigInteger.TEN))
+                .setUncleCount(0)
+                .setUmmRoot(new byte[0])
+                .build();
+
         Block block = blockFactory.newBlock(
-                blockFactory.newHeader(
-                        PegTestUtils.createHash3().getBytes(), EMPTY_LIST_HASH, TestUtils.randomAddress().getBytes(),
-                        HashUtil.EMPTY_TRIE_HASH, BlockHashesHelper.getTxTrieRoot(txs, true),
-                        HashUtil.EMPTY_TRIE_HASH, new Bloom().getData(), BigInteger.ONE.toByteArray(), 1,
-                        BigInteger.valueOf(4000000).toByteArray(), 3000000, 100, new byte[0], Coin.ZERO,
-                        null, null, null, new byte[12], BigInteger.TEN.toByteArray(), 0
-                ),
+                newHeader,
                 txs,
                 Collections.emptyList()
         );
@@ -328,8 +342,8 @@ public class BlockTest {
         BlockGenerator blockGenerator = new BlockGenerator();
         Block block1 = blockGenerator.createBlock(10, 1);
         Block block2 = blockGenerator.createBlock(10, 2);
-        String trieHash1 = Hex.toHexString(block1.getTxTrieRoot());
-        String trieHash2 = Hex.toHexString(block2.getTxTrieRoot());
+        String trieHash1 = ByteUtil.toHexString(block1.getTxTrieRoot());
+        String trieHash2 = ByteUtil.toHexString(block2.getTxTrieRoot());
         Assert.assertNotEquals(trieHash1, trieHash2);
     }
 
@@ -339,5 +353,16 @@ public class BlockTest {
         byte[] trieHash = block.getTxTrieRoot();
         byte[] trieListHash = BlockHashesHelper.getTxTrieRoot(block.getTransactionsList(), true);
         Assert.assertArrayEquals(trieHash, trieListHash);
+    }
+
+    @Test
+    public void createBlockFromHeader() {
+        Block block = new BlockGenerator().createBlock(10, 0);
+        BlockHeader header = block.getHeader();
+
+        Block result = Block.createBlockFromHeader(header, false);
+
+        Assert.assertNotNull(result);
+        Assert.assertArrayEquals(header.getHash().getBytes(), result.getHash().getBytes());
     }
 }

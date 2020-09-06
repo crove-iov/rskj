@@ -18,10 +18,10 @@
 
 package co.rsk.trie;
 
-import org.bouncycastle.util.encoders.Hex;
 import org.ethereum.datasource.KeyValueDataSource;
 
 import java.util.Collections;
+import java.util.Optional;
 import java.util.Set;
 import java.util.WeakHashMap;
 
@@ -39,7 +39,8 @@ public class TrieStoreImpl implements TrieStore {
     private KeyValueDataSource store;
 
     /** Weak references are removed once the tries are garbage collected */
-    private Set<Trie> savedTries = Collections.newSetFromMap(new WeakHashMap<>());
+    private Set<Trie> savedTries = Collections
+            .newSetFromMap(Collections.synchronizedMap(new WeakHashMap<>()));
 
     public TrieStoreImpl(KeyValueDataSource store) {
         this.store = store;
@@ -59,6 +60,13 @@ public class TrieStoreImpl implements TrieStore {
     private void save(Trie trie, boolean forceSaveRoot) {
         if (savedTries.contains(trie)) {
             // it is guaranteed that the children of a saved node are also saved
+            return;
+        }
+
+        byte[] trieKeyBytes = trie.getHash().getBytes();
+
+        if (forceSaveRoot && this.store.get(trieKeyBytes) != null) {
+            // the full trie is already saved
             return;
         }
 
@@ -82,7 +90,7 @@ public class TrieStoreImpl implements TrieStore {
             return;
         }
 
-        this.store.put(trie.getHash().getBytes(), trie.toMessage());
+        this.store.put(trieKeyBytes, trie.toMessage());
         savedTries.add(trie);
     }
 
@@ -92,21 +100,24 @@ public class TrieStoreImpl implements TrieStore {
     }
 
     @Override
-    public Trie retrieve(byte[] hash) {
+    public Optional<Trie> retrieve(byte[] hash) {
         byte[] message = this.store.get(hash);
         if (message == null) {
-            throw new IllegalArgumentException(String.format(
-                    "The trie with root %s is missing in this store", Hex.toHexString(hash)
-            ));
+            return Optional.empty();
         }
 
         Trie trie = Trie.fromMessage(message, this);
         savedTries.add(trie);
-        return trie;
+        return Optional.of(trie);
     }
 
     @Override
     public byte[] retrieveValue(byte[] hash) {
         return this.store.get(hash);
+    }
+
+    @Override
+    public void dispose() {
+        store.close();
     }
 }

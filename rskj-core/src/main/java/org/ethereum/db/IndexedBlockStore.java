@@ -40,10 +40,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static co.rsk.core.BlockDifficulty.ZERO;
@@ -98,11 +95,11 @@ public class IndexedBlockStore implements BlockStore {
 
     @Override
     public synchronized Block getBestBlock() {
-        Long maxLevel = getMaxNumber();
-        if (maxLevel < 0) {
+        if (index.isEmpty()) {
             return null;
         }
 
+        long maxLevel = index.getMaxNumber();
         Block bestBlock = getChainBlockByNumber(maxLevel);
         if (bestBlock != null) {
             return  bestBlock;
@@ -131,17 +128,6 @@ public class IndexedBlockStore implements BlockStore {
             branchBlock = getBlockByHash(branchBlock.getParentHash().getBytes());
         }
         return branchBlock.getHash().getBytes();
-    }
-
-    @Override
-    public Block getBlockByHashAndDepth(byte[] hash, long depth) {
-        Block block = this.getBlockByHash(hash);
-
-        for (long i = 0; i < depth; i++) {
-            block = this.getBlockByHash(block.getParentHash().getBytes());
-        }
-
-        return block;
     }
 
     @Override
@@ -197,6 +183,10 @@ public class IndexedBlockStore implements BlockStore {
         profiler.stop(metric);
     }
 
+    public void close() {
+        this.index.close();
+    }
+
     @Override
     public synchronized void saveBlock(Block block, BlockDifficulty cummDifficulty, boolean mainChain) {
         List<BlockInfo> blockInfos = index.getBlocksByNumber(block.getNumber());
@@ -242,6 +232,11 @@ public class IndexedBlockStore implements BlockStore {
         }
 
         return result;
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return index.isEmpty();
     }
 
     @Override
@@ -319,6 +314,11 @@ public class IndexedBlockStore implements BlockStore {
     @Override
     public long getMaxNumber() {
         return index.getMaxNumber();
+    }
+
+    @Override
+    public long getMinNumber() {
+        return index.getMinNumber();
     }
 
     @Override
@@ -495,6 +495,10 @@ public class IndexedBlockStore implements BlockStore {
      * Note that this doesn't clean the caches, making it unsuitable for using after initialization.
      */
     public void rewind(long blockNumber) {
+        if (index.isEmpty()) {
+            return;
+        }
+
         long maxNumber = getMaxNumber();
         for (long i = maxNumber; i > blockNumber; i--) {
             List<BlockInfo> blockInfos = index.removeLast();
@@ -503,6 +507,7 @@ public class IndexedBlockStore implements BlockStore {
                 this.blocks.delete(blockInfo.getHash().getBytes());
             }
         }
+        flush();
     }
 
     /**

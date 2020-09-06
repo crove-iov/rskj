@@ -2,7 +2,9 @@ package co.rsk.net.sync;
 
 
 import co.rsk.net.NodeID;
+import co.rsk.net.Peer;
 import co.rsk.scoring.EventType;
+import org.ethereum.core.Block;
 import org.ethereum.core.BlockHeader;
 import org.ethereum.core.BlockIdentifier;
 
@@ -16,48 +18,57 @@ public class SimpleSyncEventsHandler implements SyncEventsHandler {
     private boolean stopSyncingWasCalled_;
 
     @Override
-    public boolean sendBlockHashRequest(long height) { return true;}
-
-    @Override
-    public boolean sendBlockHeadersRequest(ChunkDescriptor chunk) { return true;}
-
-    @Override
-    public void onErrorSyncing(String message, EventType eventType, Object... arguments) {
-        stopSyncing();
+    public void sendBlockHeadersRequest(Peer peer, ChunkDescriptor chunk) {
     }
 
     @Override
-    public void onCompletedSyncing() {
-        stopSyncing();
-    }
-
-    @Override
-    public void startFindingConnectionPoint() {
+    public void startFindingConnectionPoint(Peer peer) {
 
     }
 
     @Override
-    public Long sendBodyRequest(@Nonnull BlockHeader header, NodeID peerId) { return 0L; }
+    public void backwardSyncing(Peer peer) {
+    }
 
     @Override
-    public boolean sendSkeletonRequest(NodeID nodeID, long height) { return true;}
+    public long sendBodyRequest(Peer peer, BlockHeader header) { return 0L; }
 
     @Override
-    public void startDownloadingHeaders(Map<NodeID, List<BlockIdentifier>> skeletons, long connectionPoint) { }
+    public void startDownloadingBodies(List<Deque<BlockHeader>> pendingHeaders, Map<Peer, List<BlockIdentifier>> skeletons, Peer peer) {
+
+    }
 
     @Override
-    public void startSyncing(NodeID nodeID) {
+    public void sendSkeletonRequest(Peer peer, long height) {
+    }
+
+    @Override
+    public void sendBlockHashRequest(Peer peer, long height) {
+    }
+
+    @Override
+    public void startDownloadingHeaders(Map<Peer, List<BlockIdentifier>> skeletons, long connectionPoint, Peer peer) { }
+
+    @Override
+    public void startSyncing(Peer peer) {
         this.startSyncingWasCalled_ = true;
     }
 
     @Override
-    public void startDownloadingBodies(List<Deque<BlockHeader>> pendingHeaders, Map<NodeID, List<BlockIdentifier>> skeletons) { }
+    public void backwardDownloadBodies(Block parent, List<BlockHeader> toRequest, Peer peer) {
+
+    }
 
     @Override
-    public void startDownloadingSkeleton(long connectionPoint) { }
+    public void startDownloadingSkeleton(long connectionPoint, Peer peer) { }
 
     @Override
     public void stopSyncing() { this.stopSyncingWasCalled_ = true; }
+
+    @Override
+    public void onErrorSyncing(NodeID peerId, String message, EventType eventType, Object... arguments) {
+        stopSyncing();
+    }
 
     @Override
     public void onSyncIssue(String message, Object... arguments) {
